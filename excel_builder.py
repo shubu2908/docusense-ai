@@ -1,15 +1,13 @@
 """
 DocuSense AI — excel_builder.py
 
-Builds the 5-sheet Excel report (Summary Dashboard, All Documents, Line
-Items, Cross-Doc Matches, Issues & Flags) from extracted documents and
-cross-document analysis results, using openpyxl with the house style:
-dark-blue bold headers, alternating row shading, severity-colored issue
-rows, Arial 10pt throughout.
+Builds the 3-sheet Excel report (Summary Dashboard, All Documents, Line
+Items) from extracted documents, using openpyxl with the house style:
+dark-blue bold headers, alternating row shading, Arial 10pt throughout.
 
-Every sheet-building function tolerates empty input (no documents, no
-matches, no issues) so a partial run — where some files failed — still
-produces a complete, downloadable workbook.
+Every sheet-building function tolerates empty input (no documents) so a
+partial run — where some files failed — still produces a complete,
+downloadable workbook.
 """
 
 from __future__ import annotations
@@ -35,17 +33,6 @@ WHITE_FILL = PatternFill(start_color="FFFFFFFF", end_color="FFFFFFFF", fill_type
 BODY_FONT = Font(name=FONT_NAME, size=FONT_SIZE)
 TITLE_FONT = Font(name=FONT_NAME, size=14, bold=True, color="FF1F4E79")
 SECTION_FONT = Font(name=FONT_NAME, size=11, bold=True, color="FF1F4E79")
-
-SEVERITY_FILLS = {
-    "High": PatternFill(start_color="FFFF0000", end_color="FFFF0000", fill_type="solid"),
-    "Medium": PatternFill(start_color="FFFFA500", end_color="FFFFA500", fill_type="solid"),
-    "Low": PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid"),
-}
-SEVERITY_FONTS = {
-    "High": Font(name=FONT_NAME, size=FONT_SIZE, bold=True, color="FFFFFFFF"),
-    "Medium": Font(name=FONT_NAME, size=FONT_SIZE, bold=True),
-    "Low": Font(name=FONT_NAME, size=FONT_SIZE),
-}
 
 WRAP_TOP_LEFT = Alignment(wrap_text=True, vertical="top")
 
@@ -116,12 +103,10 @@ def _ok_docs(documents: list[dict]) -> list[dict]:
 # Sheet 1 — Summary Dashboard
 # ---------------------------------------------------------------------------
 
-def _build_summary_dashboard(wb: Workbook, documents: list[dict], analysis: dict, generated_at: datetime) -> None:
+def _build_summary_dashboard(wb: Workbook, documents: list[dict], generated_at: datetime) -> None:
     ws = wb.create_sheet("Summary Dashboard")
     ok_docs = _ok_docs(documents)
     failed_docs = [d for d in documents if not d.get("success")]
-    issues = analysis.get("issues", [])
-    vendor_spend = analysis.get("vendor_spend", [])
 
     ws.cell(row=1, column=1, value="DocuSense AI — Summary Dashboard").font = TITLE_FONT
     ws.cell(row=2, column=1, value=f"Processed: {generated_at.strftime('%Y-%m-%d %H:%M:%S')}").font = BODY_FONT
@@ -144,30 +129,11 @@ def _build_summary_dashboard(wb: Workbook, documents: list[dict], analysis: dict
     row = _write_table(ws, row, ["Document Type", "Count", "Total Value", "Currency"], type_rows)
     row += 1
 
-    row = _section_title(ws, row, "Spend by Vendor")
-    vendor_rows = [
-        [v["vendor"], v["currency"], round(v["invoice_total"], 2), round(v["po_total"], 2), v["document_count"]]
-        for v in vendor_spend
-    ]
-    row = _write_table(ws, row, ["Vendor", "Currency", "Invoiced Total", "PO Total", "Documents"], vendor_rows)
-    row += 1
-
-    row = _section_title(ws, row, "Issues Summary")
-    severity_counts = {"High": 0, "Medium": 0, "Low": 0}
-    for issue in issues:
-        severity_counts[issue.get("severity", "Low")] = severity_counts.get(issue.get("severity", "Low"), 0) + 1
-    issue_rows = [[sev, count] for sev, count in severity_counts.items()]
-    row = _write_table(ws, row, ["Severity", "Count"], issue_rows)
-    row += 1
-
     row = _section_title(ws, row, "Overall Stats")
-    ai_status = "Success" if analysis.get("ai_enrichment_success") else f"Failed ({analysis.get('ai_error')})"
     stat_rows = [
         ["Total Files Uploaded", len(documents)],
         ["Successful Extractions", len(ok_docs)],
         ["Failed Extractions", len(failed_docs)],
-        ["Total Issues Found", len(issues)],
-        ["AI Cross-Document Enrichment", ai_status],
         ["Processing Date", generated_at.strftime("%Y-%m-%d")],
         ["Processing Time", generated_at.strftime("%H:%M:%S")],
     ]
@@ -274,63 +240,15 @@ def _build_line_items_sheet(wb: Workbook, documents: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sheet 4 — Cross-Doc Matches
-# ---------------------------------------------------------------------------
-
-def _build_cross_doc_matches_sheet(wb: Workbook, matches: list[dict]) -> None:
-    ws = wb.create_sheet("Cross-Doc Matches")
-    headers = ["PO Number", "PO Amount", "Invoice Number", "Invoice Amount", "Match Status", "Difference", "Flag"]
-
-    rows = [
-        [m.get("po_number", ""), m.get("po_amount"), m.get("invoice_number", ""), m.get("invoice_amount"),
-         m.get("match_status", ""), m.get("difference"), m.get("flag", "")]
-        for m in matches
-    ]
-
-    _write_table(ws, 1, headers, rows)
-    ws.freeze_panes = "A2"
-    _autosize_columns(ws, len(headers))
-
-
-# ---------------------------------------------------------------------------
-# Sheet 5 — Issues & Flags
-# ---------------------------------------------------------------------------
-
-def _build_issues_sheet(wb: Workbook, issues: list[dict]) -> None:
-    ws = wb.create_sheet("Issues & Flags")
-    headers = ["Severity", "Issue Type", "Document(s) Affected", "Details", "Recommended Action"]
-    _write_header_row(ws, 1, headers)
-
-    row = 2
-    for issue in issues:
-        severity = issue.get("severity", "Low")
-        fill = SEVERITY_FILLS.get(severity, SEVERITY_FILLS["Low"])
-        font = SEVERITY_FONTS.get(severity, SEVERITY_FONTS["Low"])
-        values = [severity, issue.get("issue_type", ""), issue.get("documents_affected", ""), issue.get("details", ""), issue.get("recommended_action", "")]
-        for i, value in enumerate(values):
-            cell = ws.cell(row=row, column=1 + i, value=value)
-            cell.fill = fill
-            cell.font = font
-            cell.alignment = WRAP_TOP_LEFT
-        row += 1
-
-    if not issues:
-        ws.cell(row=2, column=1, value="No issues detected.").font = BODY_FONT
-
-    ws.freeze_panes = "A2"
-    _autosize_columns(ws, len(headers))
-
-
-# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def build_excel_report(documents: list[dict], analysis: dict, custom_field_names: list[str] | None = None) -> BytesIO:
+def build_excel_report(documents: list[dict], custom_field_names: list[str] | None = None) -> BytesIO:
     """
-    Build the full 5-sheet DocuSense AI Excel report.
+    Build the 3-sheet DocuSense AI Excel report: Summary Dashboard, All
+    Documents (header details), Line Items.
 
     documents: list of {filename, doc_type, success, data, error}
-    analysis: output of analyzer.run_cross_document_analysis
     custom_field_names: optional user-defined field names to add as extra columns in "All Documents"
     """
     wb = Workbook()
@@ -338,11 +256,9 @@ def build_excel_report(documents: list[dict], analysis: dict, custom_field_names
 
     generated_at = datetime.now()
 
-    _build_summary_dashboard(wb, documents, analysis, generated_at)
+    _build_summary_dashboard(wb, documents, generated_at)
     _build_all_documents_sheet(wb, documents, custom_field_names=custom_field_names)
     _build_line_items_sheet(wb, documents)
-    _build_cross_doc_matches_sheet(wb, analysis.get("matches", []))
-    _build_issues_sheet(wb, analysis.get("issues", []))
 
     buffer = BytesIO()
     wb.save(buffer)
