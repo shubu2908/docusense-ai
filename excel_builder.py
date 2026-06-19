@@ -159,21 +159,23 @@ HEADER_DETAIL_COLUMNS = [
 ]
 
 
+def header_detail_row(d: dict, custom_field_names: list[str] | None = None) -> dict:
+    """One Header Details row as a {column_label: value} dict — shared by the Excel sheet and uipath_bridge.py."""
+    custom_field_names = custom_field_names or []
+    data = d.get("data") if d.get("success") and isinstance(d.get("data"), dict) else None
+    row = {"File Name": d["filename"]}
+    for label, key in HEADER_DETAIL_COLUMNS:
+        row[label] = data.get(key) if data else None
+    for name in custom_field_names:
+        row[name] = data.get(name) if data else None
+    return row
+
+
 def _build_header_details_sheet(wb: Workbook, documents: list[dict], custom_field_names: list[str] | None = None) -> None:
     custom_field_names = custom_field_names or []
     ws = wb.create_sheet("Header Details")
     headers = ["File Name"] + [label for label, _ in HEADER_DETAIL_COLUMNS] + custom_field_names
-
-    rows = []
-    for d in documents:
-        if d.get("success") and isinstance(d.get("data"), dict):
-            data = d["data"]
-            row = [d["filename"]] + [data.get(key) for _, key in HEADER_DETAIL_COLUMNS]
-            row.extend(data.get(name) for name in custom_field_names)
-            rows.append(row)
-        else:
-            row = [d["filename"]] + [None] * len(HEADER_DETAIL_COLUMNS) + [""] * len(custom_field_names)
-            rows.append(row)
+    rows = [[header_detail_row(d, custom_field_names)[h] for h in headers] for d in documents]
 
     _write_table(ws, 1, headers, rows)
     ws.freeze_panes = "A2"
@@ -184,35 +186,44 @@ def _build_header_details_sheet(wb: Workbook, documents: list[dict], custom_fiel
 # Sheet 3 — Line Items
 # ---------------------------------------------------------------------------
 
+LINE_ITEM_COLUMNS = ["Source Doc", "Doc Number", "Line#", "Part Number", "Description", "Qty", "Unit Price", "Tax", "Line Amount"]
+
+
+def line_item_rows(d: dict) -> list[dict]:
+    """This document's Line Items rows as {column_label: value} dicts — shared by the Excel sheet and uipath_bridge.py."""
+    if not (d.get("success") and isinstance(d.get("data"), dict)):
+        return []
+    data = d["data"]
+    line_items = data.get("line_items")
+    if not isinstance(line_items, list):
+        return []
+
+    doc_number = data.get("invoice_number") or ""
+    rows = []
+    for idx, item in enumerate(line_items, start=1):
+        if not isinstance(item, dict):
+            continue
+        rows.append({
+            "Source Doc": d["filename"],
+            "Doc Number": doc_number,
+            "Line#": idx,
+            "Part Number": item.get("part_number") or "",
+            "Description": item.get("description") or "",
+            "Qty": normalize_amount(item.get("quantity")),
+            "Unit Price": normalize_amount(item.get("unit_price")),
+            "Tax": normalize_amount(item.get("tax")),
+            "Line Amount": normalize_amount(item.get("total")),
+        })
+    return rows
+
+
 def _build_line_items_sheet(wb: Workbook, documents: list[dict]) -> None:
     ws = wb.create_sheet("Line Items")
-    headers = ["Source Doc", "Doc Number", "Line#", "Part Number", "Description", "Qty", "Unit Price", "Tax", "Line Amount"]
+    rows = [[row[h] for h in LINE_ITEM_COLUMNS] for d in _ok_docs(documents) for row in line_item_rows(d)]
 
-    rows = []
-    for d in _ok_docs(documents):
-        data = d["data"]
-        line_items = data.get("line_items")
-        if not isinstance(line_items, list):
-            continue
-        doc_number = data.get("invoice_number") or ""
-        for idx, item in enumerate(line_items, start=1):
-            if not isinstance(item, dict):
-                continue
-            rows.append([
-                d["filename"],
-                doc_number,
-                idx,
-                item.get("part_number") or "",
-                item.get("description") or "",
-                normalize_amount(item.get("quantity")),
-                normalize_amount(item.get("unit_price")),
-                normalize_amount(item.get("tax")),
-                normalize_amount(item.get("total")),
-            ])
-
-    _write_table(ws, 1, headers, rows)
+    _write_table(ws, 1, LINE_ITEM_COLUMNS, rows)
     ws.freeze_panes = "A2"
-    _autosize_columns(ws, len(headers))
+    _autosize_columns(ws, len(LINE_ITEM_COLUMNS))
 
 
 # ---------------------------------------------------------------------------

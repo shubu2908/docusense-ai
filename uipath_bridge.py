@@ -1,14 +1,15 @@
 """
 DocuSense AI — uipath_bridge.py
 
-Entry point for calling this project's extraction + Excel-building logic
-directly from external callers (built for UiPath's "Invoke Python Method"
-activity via the UiPath.Python.Activities package, but usable from any
-plain Python caller — Streamlit is never imported here).
+Entry point for calling this project's extraction + Excel/DataTable-row
+logic directly from external callers, with no Streamlit dependency.
+Used by uipath_cli.py (the recommended path for UiPath — see that file),
+and equally callable from UiPath's "Invoke Python Method" activity
+(UiPath.Python.Activities) or any other plain Python caller.
 
 Every function takes and returns plain strings (file paths, JSON) rather
-than Python objects, since that's what marshals cleanly across UiPath's
-Python bridge regardless of activity-pack version.
+than Python objects, since that's what marshals cleanly regardless of
+which calling mechanism is used.
 """
 
 from __future__ import annotations
@@ -16,8 +17,23 @@ from __future__ import annotations
 import json
 import os
 
-from excel_builder import build_excel_report
+from excel_builder import build_excel_report, header_detail_row, line_item_rows
 from extractor import DEFAULT_MODEL_NAME, configure_api, extract_document
+
+
+def _extract_batch(api_key: str, file_paths: list, model_name: str, doc_type: str) -> list:
+    model = configure_api(api_key, model_name.strip() or DEFAULT_MODEL_NAME)
+    results = []
+    for path in file_paths:
+        filename = os.path.basename(path)
+        try:
+            with open(path, "rb") as f:
+                file_bytes = f.read()
+            result = extract_document(model, filename, file_bytes, doc_type)
+        except Exception as e:
+            result = {"filename": filename, "doc_type": doc_type, "success": False, "data": None, "error": str(e)}
+        results.append(result)
+    return results
 
 
 def process_documents_to_excel(
@@ -42,20 +58,9 @@ def process_documents_to_excel(
         file_paths = json.loads(file_paths_json)
         if not isinstance(file_paths, list) or not file_paths:
             return json.dumps({"success": False, "error": "file_paths_json must be a non-empty JSON array of file paths."})
-        model = configure_api(api_key, model_name.strip() or DEFAULT_MODEL_NAME)
+        results = _extract_batch(api_key, file_paths, model_name, doc_type)
     except Exception as e:
         return json.dumps({"success": False, "error": f"Setup failed: {e}"})
-
-    results = []
-    for path in file_paths:
-        filename = os.path.basename(path)
-        try:
-            with open(path, "rb") as f:
-                file_bytes = f.read()
-            result = extract_document(model, filename, file_bytes, doc_type)
-        except Exception as e:
-            result = {"filename": filename, "doc_type": doc_type, "success": False, "data": None, "error": str(e)}
-        results.append(result)
 
     try:
         buf = build_excel_report(results)
@@ -66,6 +71,44 @@ def process_documents_to_excel(
 
     summary = [{"filename": r["filename"], "success": r["success"], "error": r["error"]} for r in results]
     return json.dumps({"success": True, "excel_path": output_excel_path, "results": summary})
+
+
+def process_documents_to_rows(
+    api_key: str,
+    file_paths_json: str,
+    model_name: str = "",
+    doc_type: str = "Invoice",
+) -> str:
+    """
+    Extracts every file listed in file_paths_json and returns flat JSON rows — one row per
+    document for headers, one row per line item — ready to convert directly into UiPath
+    DataTables (e.g. via "Deserialize JSON Array" / building a DataTable from the array),
+    which you can then write to Excel yourself with UiPath's own Excel activities:
+
+        {
+          "success": true,
+          "header_rows": [{"File Name": ..., "Document Type": ..., ...}, ...],
+          "line_item_rows": [{"Source Doc": ..., "Doc Number": ..., ...}, ...],
+          "errors": [{"filename": ..., "error": ...}, ...]
+        }
+        {"success": false, "error": "..."}
+
+    Use this instead of process_documents_to_excel() when you want the data back as UiPath
+    DataTables rather than an already-built Excel file.
+    """
+    try:
+        file_paths = json.loads(file_paths_json)
+        if not isinstance(file_paths, list) or not file_paths:
+            return json.dumps({"success": False, "error": "file_paths_json must be a non-empty JSON array of file paths."})
+        results = _extract_batch(api_key, file_paths, model_name, doc_type)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"Setup failed: {e}"})
+
+    header_rows = [header_detail_row(r) for r in results]
+    item_rows = [row for r in results for row in line_item_rows(r)]
+    errors = [{"filename": r["filename"], "error": r["error"]} for r in results if not r["success"]]
+
+    return json.dumps({"success": True, "header_rows": header_rows, "line_item_rows": item_rows, "errors": errors})
 
 
 def extract_single_document(api_key: str, file_path: str, model_name: str = "", doc_type: str = "Invoice") -> str:
