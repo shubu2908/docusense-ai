@@ -3,7 +3,7 @@ DocuSense AI — app.py
 
 Main Streamlit application. Wires together extractor.py (Gemini
 extraction) and excel_builder.py (3-sheet Excel report: Summary
-Dashboard, All Documents, Line Items) behind a 5-step UI:
+Dashboard, Header Details, Line Items) behind a 5-step UI:
 
   1. Upload zone
   2. Document type assignment
@@ -20,7 +20,7 @@ from datetime import datetime
 
 import streamlit as st
 
-from analyzer import get_doc_amount
+from analyzer import normalize_amount
 from excel_builder import build_excel_report
 from extractor import (
     DEFAULT_MODEL_NAME,
@@ -305,20 +305,12 @@ if results is not None:
 
     with tab1:
         ok_docs = [r for r in results if r["success"]]
-        amounts = [get_doc_amount(r["doc_type"], r["data"]) or 0.0 for r in ok_docs]
-        currencies = {(r["data"].get("currency") or "").strip() for r in ok_docs if r["data"].get("currency")}
-        total_value = sum(amounts)
-        if len(currencies) == 1:
-            value_label = f"{total_value:,.2f} {next(iter(currencies))}"
-        elif currencies:
-            value_label = f"{total_value:,.2f} (mixed currencies)"
-        else:
-            value_label = f"{total_value:,.2f}"
+        total_value = sum(normalize_amount(r["data"].get("total")) or 0.0 for r in ok_docs)
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Documents Processed", len(results))
         c2.metric("Successful Extractions", len(ok_docs))
-        c3.metric("Total Value", value_label)
+        c3.metric("Total Value", f"{total_value:,.2f}")
 
     with tab2:
         for r in results:
@@ -332,7 +324,7 @@ if results is not None:
     with tab3:
         if st.session_state.excel_bytes:
             st.markdown(
-                "Your Excel report includes **3 sheets**: Summary Dashboard, All Documents, and Line Items."
+                "Your Excel report includes **3 sheets**: Summary Dashboard, Header Details, and Line Items."
             )
             st.download_button(
                 "⬇️ Download Excel Report",

@@ -1,7 +1,7 @@
 """
 DocuSense AI — excel_builder.py
 
-Builds the 3-sheet Excel report (Summary Dashboard, All Documents, Line
+Builds the 3-sheet Excel report (Summary Dashboard, Header Details, Line
 Items) from extracted documents, using openpyxl with the house style:
 dark-blue bold headers, alternating row shading, Arial 10pt throughout.
 
@@ -21,7 +21,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from analyzer import get_doc_amount, get_doc_number, get_vendor, normalize_amount
+from analyzer import normalize_amount
 
 FONT_NAME = "Arial"
 FONT_SIZE = 10
@@ -113,20 +113,15 @@ def _build_summary_dashboard(wb: Workbook, documents: list[dict], generated_at: 
 
     row = 4
     row = _section_title(ws, row, "Documents by Type")
-    by_type: dict[str, dict[str, dict[str, float]]] = {}
+    by_type: dict[str, dict[str, float]] = {}
     for d in ok_docs:
-        amount = get_doc_amount(d["doc_type"], d["data"]) or 0.0
-        currency = (d["data"].get("currency") or "—").strip() or "—"
-        bucket = by_type.setdefault(d["doc_type"], {})
-        entry = bucket.setdefault(currency, {"count": 0, "total": 0.0})
+        amount = normalize_amount(d["data"].get("total")) or 0.0
+        entry = by_type.setdefault(d["doc_type"], {"count": 0, "total": 0.0})
         entry["count"] += 1
         entry["total"] += amount
 
-    type_rows = []
-    for doc_type, currencies in sorted(by_type.items()):
-        for currency, entry in sorted(currencies.items()):
-            type_rows.append([doc_type, entry["count"], round(entry["total"], 2), currency])
-    row = _write_table(ws, row, ["Document Type", "Count", "Total Value", "Currency"], type_rows)
+    type_rows = [[doc_type, entry["count"], round(entry["total"], 2)] for doc_type, entry in sorted(by_type.items())]
+    row = _write_table(ws, row, ["Document Type", "Count", "Total Value"], type_rows)
     row += 1
 
     row = _section_title(ws, row, "Overall Stats")
@@ -143,59 +138,41 @@ def _build_summary_dashboard(wb: Workbook, documents: list[dict], generated_at: 
 
 
 # ---------------------------------------------------------------------------
-# Sheet 2 — All Documents
+# Sheet 2 — Header Details
 # ---------------------------------------------------------------------------
 
-def _build_key_info(doc_type: str, data: dict) -> str:
-    parts = []
-    if data.get("status"):
-        parts.append(f"Status: {data['status']}")
-    if doc_type == "Invoice" and data.get("payment_terms"):
-        parts.append(f"Terms: {data['payment_terms']}")
-    if doc_type == "Invoice" and data.get("due_date"):
-        parts.append(f"Due: {data['due_date']}")
-    if doc_type == "Purchase Order" and data.get("approval_status"):
-        parts.append(f"Approval: {data['approval_status']}")
-    if doc_type == "Contract" and data.get("jurisdiction"):
-        parts.append(f"Jurisdiction: {data['jurisdiction']}")
-    if doc_type == "Contract" and data.get("expiry_date"):
-        parts.append(f"Expires: {data['expiry_date']}")
-    key_dates = data.get("key_dates")
-    if isinstance(key_dates, list) and key_dates:
-        labels = ", ".join(
-            f"{kd.get('label', '')}: {kd.get('date', '')}" for kd in key_dates if isinstance(kd, dict)
-        )
-        if labels:
-            parts.append(f"Key dates: {labels}")
-    return " | ".join(parts)
+# (Excel column header, source JSON key) — one row per document.
+HEADER_DETAIL_COLUMNS = [
+    ("Document Type", "document_type"),
+    ("Invoice Number", "invoice_number"),
+    ("Invoice Date", "invoice_date"),
+    ("PO Number", "po_number"),
+    ("Vendor Name", "vendor_name"),
+    ("Bill To", "bill_to"),
+    ("Subtotal", "subtotal"),
+    ("Tax", "tax"),
+    ("Shipping Charges", "shipping_charges"),
+    ("Total", "total"),
+    ("Payment Terms", "payment_terms"),
+    ("Due Date", "due_date"),
+    ("Bank Details", "bank_details"),
+]
 
 
-def _build_all_documents_sheet(wb: Workbook, documents: list[dict], custom_field_names: list[str] | None = None) -> None:
+def _build_header_details_sheet(wb: Workbook, documents: list[dict], custom_field_names: list[str] | None = None) -> None:
     custom_field_names = custom_field_names or []
-    ws = wb.create_sheet("All Documents")
-    headers = ["File Name", "Doc Type", "Doc Number", "Date", "Party 1", "Party 2", "Amount", "Currency", "Key Info", "AI Summary"] + custom_field_names
+    ws = wb.create_sheet("Header Details")
+    headers = ["File Name"] + [label for label, _ in HEADER_DETAIL_COLUMNS] + custom_field_names
 
     rows = []
     for d in documents:
         if d.get("success") and isinstance(d.get("data"), dict):
             data = d["data"]
-            row = [
-                d["filename"],
-                d["doc_type"],
-                get_doc_number(d["doc_type"], data) or "",
-                data.get("document_date") or "",
-                data.get("party_name_1") or "",
-                data.get("party_name_2") or "",
-                get_doc_amount(d["doc_type"], data),
-                data.get("currency") or "",
-                _build_key_info(d["doc_type"], data),
-                data.get("summary") or "",
-            ]
+            row = [d["filename"]] + [data.get(key) for _, key in HEADER_DETAIL_COLUMNS]
             row.extend(data.get(name) for name in custom_field_names)
             rows.append(row)
         else:
-            row = [d["filename"], d.get("doc_type", ""), "", "", "", "", None, "", "", f"ERROR: {d.get('error', 'Extraction failed')}"]
-            row.extend([""] * len(custom_field_names))
+            row = [d["filename"]] + [None] * len(HEADER_DETAIL_COLUMNS) + [""] * len(custom_field_names)
             rows.append(row)
 
     _write_table(ws, 1, headers, rows)
@@ -209,17 +186,15 @@ def _build_all_documents_sheet(wb: Workbook, documents: list[dict], custom_field
 
 def _build_line_items_sheet(wb: Workbook, documents: list[dict]) -> None:
     ws = wb.create_sheet("Line Items")
-    headers = ["Source Doc", "Doc Number", "Line#", "Description", "Qty", "Unit Price", "Tax", "Total"]
+    headers = ["Source Doc", "Doc Number", "Line#", "Part Number", "Description", "Qty", "Unit Price", "Tax", "Line Amount"]
 
     rows = []
     for d in _ok_docs(documents):
-        if d["doc_type"] not in ("Invoice", "Purchase Order"):
-            continue
         data = d["data"]
         line_items = data.get("line_items")
         if not isinstance(line_items, list):
             continue
-        doc_number = get_doc_number(d["doc_type"], data) or ""
+        doc_number = data.get("invoice_number") or ""
         for idx, item in enumerate(line_items, start=1):
             if not isinstance(item, dict):
                 continue
@@ -227,6 +202,7 @@ def _build_line_items_sheet(wb: Workbook, documents: list[dict]) -> None:
                 d["filename"],
                 doc_number,
                 idx,
+                item.get("part_number") or "",
                 item.get("description") or "",
                 normalize_amount(item.get("quantity")),
                 normalize_amount(item.get("unit_price")),
@@ -245,11 +221,11 @@ def _build_line_items_sheet(wb: Workbook, documents: list[dict]) -> None:
 
 def build_excel_report(documents: list[dict], custom_field_names: list[str] | None = None) -> BytesIO:
     """
-    Build the 3-sheet DocuSense AI Excel report: Summary Dashboard, All
-    Documents (header details), Line Items.
+    Build the 3-sheet DocuSense AI Excel report: Summary Dashboard, Header
+    Details, Line Items.
 
     documents: list of {filename, doc_type, success, data, error}
-    custom_field_names: optional user-defined field names to add as extra columns in "All Documents"
+    custom_field_names: optional user-defined field names to add as extra columns in "Header Details"
     """
     wb = Workbook()
     wb.remove(wb.active)  # drop the default blank sheet; we add our own in order
@@ -257,7 +233,7 @@ def build_excel_report(documents: list[dict], custom_field_names: list[str] | No
     generated_at = datetime.now()
 
     _build_summary_dashboard(wb, documents, generated_at)
-    _build_all_documents_sheet(wb, documents, custom_field_names=custom_field_names)
+    _build_header_details_sheet(wb, documents, custom_field_names=custom_field_names)
     _build_line_items_sheet(wb, documents)
 
     buffer = BytesIO()

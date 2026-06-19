@@ -1,16 +1,16 @@
 """
 DocuSense AI — extractor.py
 
-Handles all direct communication with Google Gemini 1.5 Flash:
-- Building document-type-aware extraction prompts
+Handles all direct communication with Gemini:
+- Building extraction prompts from one fixed field schema (FIELDS)
 - Sending PDF/image bytes to Gemini for structured extraction
 - Defensive JSON parsing with a single automatic retry on failure
 
 This module also exposes a couple of small JSON-handling utilities
 (`clean_json_text`, `safe_json_loads`) and a generic
-`call_gemini_with_json_retry` helper that analyzer.py reuses for the
-cross-document intelligence pass, so there is exactly one place that
-knows how to coax Gemini into returning clean JSON.
+`call_gemini_with_json_retry` helper that analyzer.py reuses for its
+(currently unwired) cross-document intelligence pass, so there is
+exactly one place that knows how to coax Gemini into returning clean JSON.
 """
 
 from __future__ import annotations
@@ -41,63 +41,31 @@ MIME_TYPES = {
 MAX_TIFF_PAGES = 30
 
 # ---------------------------------------------------------------------------
-# Field schemas
+# Field schema
+#
+# One fixed schema is used for every document regardless of the doc_type
+# label assigned in Step 2 — that label is still sent to Gemini as context,
+# but it no longer changes which fields get requested.
 # ---------------------------------------------------------------------------
 
-COMMON_FIELDS = {
+FIELDS = {
     "document_type": "Best-guess type of this document: Invoice, Contract, Purchase Order, Report, or Other",
-    "document_number": "The primary identifying number/ID printed on the document",
-    "document_date": "The date the document was issued, formatted YYYY-MM-DD if determinable",
-    "party_name_1": "The first named party (issuer, seller, vendor, disclosing party, etc.)",
-    "party_name_2": "The second named party (recipient, buyer, client, receiving party, etc.)",
-    "total_amount": "The headline total monetary amount on the document, as a plain number (no currency symbols, no commas)",
-    "currency": "ISO currency code if determinable (e.g. USD, EUR, INR, GBP)",
-    "status": "Any status shown on the document (e.g. Paid, Pending, Draft, Signed, Approved, Overdue)",
-    "key_dates": "Array of other important dates found, each item shaped like {\"label\": str, \"date\": \"YYYY-MM-DD\"}",
-    "summary": "A concise 1-3 sentence plain-English summary of what this document is and what it says",
-}
-
-INVOICE_FIELDS = {
     "invoice_number": "The invoice number/ID",
-    "vendor": "The vendor/seller issuing the invoice",
+    "invoice_date": "The date the invoice was issued, formatted YYYY-MM-DD if determinable",
+    "po_number": "Any purchase order number referenced on the document, or null",
+    "vendor_name": "The vendor/seller issuing the document",
     "bill_to": "The party being billed",
-    "po_reference": "Any purchase order number referenced on the invoice, or null",
-    "line_items": "Array of items, each {\"description\": str, \"quantity\": number, \"unit_price\": number, \"tax\": number, \"total\": number}",
-    "subtotal": "Subtotal amount before tax, as a plain number",
+    "line_items": (
+        "Array of items, each {\"part_number\": str, \"description\": str, \"quantity\": number, "
+        "\"unit_price\": number, \"tax\": number, \"total\": number}"
+    ),
+    "subtotal": "Subtotal amount before tax and shipping, as a plain number",
     "tax": "Total tax amount, as a plain number",
+    "shipping_charges": "Shipping/freight/handling charges, as a plain number, or null",
     "total": "Final total amount, as a plain number",
     "payment_terms": "Payment terms text (e.g. 'Net 30')",
     "due_date": "Payment due date, formatted YYYY-MM-DD if determinable",
     "bank_details": "Any bank/payment account details listed (account number, IFSC/SWIFT, bank name), as a single string or null",
-}
-
-CONTRACT_FIELDS = {
-    "contract_id": "The contract reference number/ID",
-    "parties": "Array of strings naming all parties to the contract",
-    "effective_date": "Contract start/effective date, formatted YYYY-MM-DD if determinable",
-    "expiry_date": "Contract end/expiry date, formatted YYYY-MM-DD if determinable",
-    "value": "Total contract value, as a plain number, or null",
-    "jurisdiction": "Governing law / jurisdiction stated in the contract",
-    "key_obligations": "Array of strings, each a short description of a key obligation",
-    "termination_clause": "Short summary of the termination clause, or null",
-    "renewal_terms": "Short summary of renewal/auto-renewal terms, or null",
-    "penalties": "Short summary of any penalty/liquidated-damages clauses, or null",
-}
-
-PO_FIELDS = {
-    "po_number": "The purchase order number",
-    "vendor": "The vendor the PO was issued to",
-    "delivery_date": "Expected delivery date, formatted YYYY-MM-DD if determinable",
-    "line_items": "Array of items, each {\"description\": str, \"quantity\": number, \"unit_price\": number, \"tax\": number, \"total\": number}",
-    "total_value": "Total PO value, as a plain number",
-    "delivery_address": "Delivery address text, or null",
-    "approval_status": "Approval status if shown (e.g. Approved, Pending Approval)",
-}
-
-TYPE_SPECIFIC_FIELDS = {
-    "Invoice": INVOICE_FIELDS,
-    "Contract": CONTRACT_FIELDS,
-    "Purchase Order": PO_FIELDS,
 }
 
 DOC_TYPES = ["Invoice", "Contract", "Purchase Order", "Report", "Other"]
@@ -149,15 +117,12 @@ def build_file_parts(filename: str, file_bytes: bytes) -> list[dict]:
 # Prompt building
 # ---------------------------------------------------------------------------
 
-DEFAULT_LIST_FIELDS = {"line_items", "parties", "key_obligations", "key_dates"}
+DEFAULT_LIST_FIELDS = {"line_items"}
 
 
 def get_all_field_names() -> list[str]:
-    """All field names known across the common + type-specific schemas, for building a 'remove field' picker."""
-    names = set(COMMON_FIELDS)
-    for fields in TYPE_SPECIFIC_FIELDS.values():
-        names.update(fields)
-    return sorted(names)
+    """All built-in field names, for building a 'remove field' picker."""
+    return sorted(FIELDS)
 
 
 def sanitize_field_name(name: str) -> str:
@@ -179,8 +144,7 @@ def build_extraction_prompt(
     custom_fields: list[dict] | None = None,
     excluded_fields: set | None = None,
 ) -> str:
-    type_fields = TYPE_SPECIFIC_FIELDS.get(doc_type, {})
-    all_fields = {**COMMON_FIELDS, **type_fields}
+    all_fields = dict(FIELDS)
 
     if excluded_fields:
         all_fields = {k: v for k, v in all_fields.items() if k not in excluded_fields}
