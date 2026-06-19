@@ -9,12 +9,17 @@ stdout. Exit code is 0 if the script itself ran (check the JSON's
 arguments or an unexpected crash before any JSON could be produced.
 
 Usage:
-  python uipath_cli.py to-excel --api-key KEY --files "a.pdf|b.tif" --output out.xlsx [--model NAME] [--doc-type Invoice]
-  python uipath_cli.py to-rows  --api-key KEY --files "a.pdf|b.tif" [--model NAME] [--doc-type Invoice]
-  python uipath_cli.py single   --api-key KEY --file  a.pdf         [--model NAME] [--doc-type Invoice]
+  python uipath_cli.py to-excel --api-key KEY --files "a.pdf|b.tif" --output out.xlsx [--model NAME] [--doc-type Invoice] [--result-file result.json]
+  python uipath_cli.py to-rows  --api-key KEY --files "a.pdf|b.tif" [--model NAME] [--doc-type Invoice] [--result-file result.json]
+  python uipath_cli.py single   --api-key KEY --file  a.pdf         [--model NAME] [--doc-type Invoice] [--result-file result.json]
 
 --files takes a "|"-delimited list of absolute file paths (build it in UiPath with
 String.Join("|", arrayOfPaths)) since that's simpler to construct from a workflow than JSON.
+
+--result-file, if given, also writes the JSON result to that path. Prefer this over
+capturing stdout from "Start Process"/"Invoke Power Shell" in UiPath — the exact
+stdout-capture property differs across UiPath package versions, but "Start Process" +
+"Read Text File" on a known path works identically everywhere.
 """
 
 from __future__ import annotations
@@ -40,18 +45,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p_excel.add_argument("--output", required=True, help="Absolute path to write the .xlsx report to")
     p_excel.add_argument("--model", default="")
     p_excel.add_argument("--doc-type", default="Invoice")
+    p_excel.add_argument("--result-file", default="")
 
     p_rows = sub.add_parser("to-rows")
     p_rows.add_argument("--api-key", required=True)
     p_rows.add_argument("--files", required=True, help='"|"-separated list of absolute file paths')
     p_rows.add_argument("--model", default="")
     p_rows.add_argument("--doc-type", default="Invoice")
+    p_rows.add_argument("--result-file", default="")
 
     p_single = sub.add_parser("single")
     p_single.add_argument("--api-key", required=True)
     p_single.add_argument("--file", required=True)
     p_single.add_argument("--model", default="")
     p_single.add_argument("--doc-type", default="Invoice")
+    p_single.add_argument("--result-file", default="")
 
     return parser
 
@@ -91,11 +99,25 @@ def main(argv: list[str] | None = None) -> int:
                 doc_type=args.doc_type,
             )
     except Exception as e:
-        print(json.dumps({"success": False, "error": f"Unexpected error: {e}"}))
+        result = json.dumps({"success": False, "error": f"Unexpected error: {e}"})
+        print(result)
+        if args.result_file:
+            _write_result_file(args.result_file, result)
         return 1
 
     print(result)
+    if args.result_file:
+        _write_result_file(args.result_file, result)
     return 0
+
+
+def _write_result_file(path: str, content: str) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception as e:
+        # The JSON result is already on stdout; a failed file write shouldn't mask that.
+        print(json.dumps({"success": False, "error": f"Could not write --result-file '{path}': {e}"}), file=sys.stderr)
 
 
 if __name__ == "__main__":
