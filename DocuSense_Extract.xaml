@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Activity mc:Ignorable="sap sap2010" x:Class="DocuSense_Extract"
+  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:njl="clr-namespace:Newtonsoft.Json.Linq;assembly=Newtonsoft.Json"
+  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
+  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
+  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
+  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
+  xmlns:sd="clr-namespace:System.Data;assembly=System.Data"
+  xmlns:ui="http://schemas.uipath.com/workflow/activities">
+  <x:Members>
+    <x:Property Name="in_ApiKey" Type="InArgument(x:String)" />
+    <x:Property Name="in_FilePaths" Type="InArgument(x:String)" />
+    <x:Property Name="in_DocType" Type="InArgument(x:String)" />
+    <x:Property Name="in_PythonExePath" Type="InArgument(x:String)" />
+    <x:Property Name="in_WorkingDirectory" Type="InArgument(x:String)" />
+    <x:Property Name="in_OutputExcelPath" Type="InArgument(x:String)" />
+  </x:Members>
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>System</x:String>
+      <x:String>System.IO</x:String>
+      <x:String>System.Data</x:String>
+      <x:String>Newtonsoft.Json.Linq</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <TextExpression.ReferencesForImplementation>
+    <sco:Collection x:TypeArguments="AssemblyReference">
+      <AssemblyReference>System.Private.CoreLib</AssemblyReference>
+      <AssemblyReference>System.IO.FileSystem</AssemblyReference>
+      <AssemblyReference>System.Data.Common</AssemblyReference>
+      <AssemblyReference>Newtonsoft.Json</AssemblyReference>
+    </sco:Collection>
+  </TextExpression.ReferencesForImplementation>
+
+  <!--
+    DocuSense_Extract.xaml
+
+    Input arguments (fill these in via the auto-generated input form when you press
+    F5/Debug in Studio, or wire them from a parent workflow):
+      in_ApiKey            - your Gemini API key
+      in_FilePaths         - "|"-delimited absolute file paths, e.g. C:\inv\a.pdf|C:\inv\b.tif
+      in_DocType           - e.g. "Invoice"
+      in_PythonExePath     - full path to python.exe (the one with this project's pip packages installed)
+      in_WorkingDirectory  - full path to the docusense folder (contains uipath_cli.py)
+      in_OutputExcelPath   - full path to write the Header Details .xlsx to
+
+    Calls uipath_cli.py (to-rows mode), polls for its result file instead of relying on
+    captured stdout, builds a DataTable from the "header_rows" JSON array, and writes it
+    to Excel with Write Range. Line items aren't included in this first version — same
+    pattern (a second DataTable from "line_item_rows", a second Write Range call) extends
+    it once this part is confirmed working in your environment.
+  -->
+
+  <Sequence DisplayName="DocuSense Extract - Header Details to Excel">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="ResultJsonPath" />
+      <Variable x:TypeArguments="x:String" Name="ResultJsonString" />
+      <Variable x:TypeArguments="njl:JObject" Name="ResultObj" />
+      <Variable x:TypeArguments="x:Boolean" Name="IsSuccess" />
+      <Variable x:TypeArguments="sd:DataTable" Name="dtHeaderDetails" />
+      <Variable x:TypeArguments="njl:JToken" Name="CurrentRow" />
+      <Variable x:TypeArguments="x:Int32" Name="WaitAttempts" />
+    </Sequence.Variables>
+
+    <!-- Build the path the CLI will write its JSON result to -->
+    <Assign DisplayName="Set Result JSON Path">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[ResultJsonPath]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[Path.Combine(in_WorkingDirectory, "result_" &amp; Guid.NewGuid().ToString("N") &amp; ".json")]</InArgument>
+      </Assign.Value>
+    </Assign>
+
+    <!-- Delete any stale file at that path (defensive; new GUID name makes this unlikely to matter) -->
+    <If Condition="[File.Exists(ResultJsonPath)]" DisplayName="Remove stale result file if present">
+      <If.Then>
+        <InvokeMethod MethodName="Delete" TargetType="System.IO.File" DisplayName="Delete stale result file">
+          <InArgument x:TypeArguments="x:String">[ResultJsonPath]</InArgument>
+        </InvokeMethod>
+      </If.Then>
+    </If>
+
+    <!-- Launch uipath_cli.py -->
+    <ui:StartProcess DisplayName="Run uipath_cli.py (to-rows)"
+      FileName="[in_PythonExePath]"
+      WorkingDirectory="[in_WorkingDirectory]"
+      Arguments="[String.Format(&quot;uipath_cli.py to-rows --api-key &quot;&quot;{0}&quot;&quot; --files &quot;&quot;{1}&quot;&quot; --doc-type &quot;&quot;{2}&quot;&quot; --result-file &quot;&quot;{3}&quot;&quot;&quot;, in_ApiKey, in_FilePaths, in_DocType, ResultJsonPath)]" />
+
+    <!-- Poll for the result file rather than assuming Start Process blocked until exit -->
+    <Assign DisplayName="Reset wait counter">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:Int32">[WaitAttempts]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:Int32">0</InArgument>
+      </Assign.Value>
+    </Assign>
+    <While DisplayName="Wait for result file (up to ~60s)" Condition="[Not File.Exists(ResultJsonPath) And WaitAttempts &lt; 60]">
+      <Sequence>
+        <Delay Duration="[TimeSpan.FromSeconds(1)]" />
+        <Assign DisplayName="Increment wait counter">
+          <Assign.To>
+            <OutArgument x:TypeArguments="x:Int32">[WaitAttempts]</OutArgument>
+          </Assign.To>
+          <Assign.Value>
+            <InArgument x:TypeArguments="x:Int32">[WaitAttempts + 1]</InArgument>
+          </Assign.Value>
+        </Assign>
+      </Sequence>
+    </While>
+
+    <If Condition="[Not File.Exists(ResultJsonPath)]" DisplayName="Check result file actually appeared">
+      <If.Then>
+        <Throw Exception="[New Exception(&quot;uipath_cli.py did not produce a result file within 60s - check in_PythonExePath and in_WorkingDirectory.&quot;)]" />
+      </If.Then>
+    </If>
+
+    <!-- Read + parse the JSON result -->
+    <Assign DisplayName="Read result JSON">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[ResultJsonString]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[File.ReadAllText(ResultJsonPath)]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Parse JSON">
+      <Assign.To>
+        <OutArgument x:TypeArguments="njl:JObject">[ResultObj]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="njl:JObject">[JObject.Parse(ResultJsonString)]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Read success flag">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:Boolean">[IsSuccess]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:Boolean">[ResultObj("success").ToObject(Of Boolean)]</InArgument>
+      </Assign.Value>
+    </Assign>
+
+    <If Condition="[Not IsSuccess]" DisplayName="Check extraction call succeeded">
+      <If.Then>
+        <Throw Exception="[New Exception(&quot;uipath_cli.py reported failure: &quot; &amp; CStr(ResultObj(&quot;error&quot;)))]" />
+      </If.Then>
+    </If>
+
+    <!-- Build the Header Details DataTable schema -->
+    <Assign DisplayName="Create empty DataTable">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataTable">[dtHeaderDetails]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataTable">[New DataTable()]</InArgument>
+      </Assign.Value>
+    </Assign>
+
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: File Name">
+      <InArgument x:TypeArguments="x:String">File Name</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Document Type">
+      <InArgument x:TypeArguments="x:String">Document Type</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Invoice Number">
+      <InArgument x:TypeArguments="x:String">Invoice Number</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Invoice Date">
+      <InArgument x:TypeArguments="x:String">Invoice Date</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: PO Number">
+      <InArgument x:TypeArguments="x:String">PO Number</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Vendor Name">
+      <InArgument x:TypeArguments="x:String">Vendor Name</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Bill To">
+      <InArgument x:TypeArguments="x:String">Bill To</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Subtotal">
+      <InArgument x:TypeArguments="x:String">Subtotal</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Tax">
+      <InArgument x:TypeArguments="x:String">Tax</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Shipping Charges">
+      <InArgument x:TypeArguments="x:String">Shipping Charges</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Total">
+      <InArgument x:TypeArguments="x:String">Total</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Payment Terms">
+      <InArgument x:TypeArguments="x:String">Payment Terms</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Due Date">
+      <InArgument x:TypeArguments="x:String">Due Date</InArgument>
+    </InvokeMethod>
+    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Bank Details">
+      <InArgument x:TypeArguments="x:String">Bank Details</InArgument>
+    </InvokeMethod>
+
+    <!-- One row per document from header_rows -->
+    <ForEach x:TypeArguments="njl:JToken" DisplayName="For Each header row" Values="[ResultObj(&quot;header_rows&quot;)]">
+      <ActivityAction x:TypeArguments="njl:JToken">
+        <ActivityAction.Argument>
+          <DelegateInArgument x:TypeArguments="njl:JToken" Name="CurrentRow" />
+        </ActivityAction.Argument>
+        <ui:AddDataRow DisplayName="Add row to dtHeaderDetails"
+          DataTable="[dtHeaderDetails]"
+          ArrayRow="[New Object() {
+            CStr(CurrentRow(&quot;File Name&quot;)),
+            CStr(CurrentRow(&quot;Document Type&quot;)),
+            CStr(CurrentRow(&quot;Invoice Number&quot;)),
+            CStr(CurrentRow(&quot;Invoice Date&quot;)),
+            CStr(CurrentRow(&quot;PO Number&quot;)),
+            CStr(CurrentRow(&quot;Vendor Name&quot;)),
+            CStr(CurrentRow(&quot;Bill To&quot;)),
+            CStr(CurrentRow(&quot;Subtotal&quot;)),
+            CStr(CurrentRow(&quot;Tax&quot;)),
+            CStr(CurrentRow(&quot;Shipping Charges&quot;)),
+            CStr(CurrentRow(&quot;Total&quot;)),
+            CStr(CurrentRow(&quot;Payment Terms&quot;)),
+            CStr(CurrentRow(&quot;Due Date&quot;)),
+            CStr(CurrentRow(&quot;Bank Details&quot;))}]" />
+      </ActivityAction>
+    </ForEach>
+
+    <!-- Export to Excel -->
+    <ui:WriteRange DisplayName="Write Header Details to Excel"
+      WorkbookPath="[in_OutputExcelPath]"
+      SheetName="Header Details"
+      DataTable="[dtHeaderDetails]"
+      AddHeaders="True" />
+
+    <!-- Clean up the temp result file -->
+    <InvokeMethod MethodName="Delete" TargetType="System.IO.File" DisplayName="Delete temp result file">
+      <InArgument x:TypeArguments="x:String">[ResultJsonPath]</InArgument>
+    </InvokeMethod>
+
+  </Sequence>
+</Activity>
