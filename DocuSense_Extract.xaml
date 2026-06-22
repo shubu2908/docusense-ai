@@ -75,15 +75,6 @@
       </Assign.Value>
     </Assign>
 
-    <!-- Delete any stale file at that path (defensive; new GUID name makes this unlikely to matter) -->
-    <If Condition="[File.Exists(ResultJsonPath)]" DisplayName="Remove stale result file if present">
-      <If.Then>
-        <InvokeMethod MethodName="Delete" TargetType="System.IO.File" DisplayName="Delete stale result file">
-          <InArgument x:TypeArguments="x:String">[ResultJsonPath]</InArgument>
-        </InvokeMethod>
-      </If.Then>
-    </If>
-
     <!-- Launch uipath_cli.py -->
     <ui:StartProcess DisplayName="Run uipath_cli.py (to-rows)"
       FileName="[in_PythonExePath]"
@@ -236,11 +227,6 @@
       SheetName="Header Details"
       DataTable="[dtHeaderDetails]"
       AddHeaders="True" />
-
-    <!-- Clean up the temp result file -->
-    <InvokeMethod MethodName="Delete" TargetType="System.IO.File" DisplayName="Delete temp result file">
-      <InArgument x:TypeArguments="x:String">[ResultJsonPath]</InArgument>
-    </InvokeMethod>
 
   </Sequence>
 </Activity>
