@@ -142,58 +142,33 @@
       </If.Then>
     </If>
 
-    <!-- Build the Header Details DataTable schema -->
-    <Assign DisplayName="Create empty DataTable">
+    <!-- Build the Header Details DataTable schema in one expression (avoids InvokeMethod's
+         argument-binding issues with generically-typed properties like TargetObject) -->
+    <Assign DisplayName="Create dtHeaderDetails with columns">
       <Assign.To>
         <OutArgument x:TypeArguments="sd:DataTable">[dtHeaderDetails]</OutArgument>
       </Assign.To>
       <Assign.Value>
-        <InArgument x:TypeArguments="sd:DataTable">[New DataTable()]</InArgument>
+        <InArgument x:TypeArguments="sd:DataTable">[CType((Function()
+    Dim dt As New DataTable()
+    dt.Columns.Add("File Name")
+    dt.Columns.Add("Document Type")
+    dt.Columns.Add("Invoice Number")
+    dt.Columns.Add("Invoice Date")
+    dt.Columns.Add("PO Number")
+    dt.Columns.Add("Vendor Name")
+    dt.Columns.Add("Bill To")
+    dt.Columns.Add("Subtotal")
+    dt.Columns.Add("Tax")
+    dt.Columns.Add("Shipping Charges")
+    dt.Columns.Add("Total")
+    dt.Columns.Add("Payment Terms")
+    dt.Columns.Add("Due Date")
+    dt.Columns.Add("Bank Details")
+    Return dt
+End Function)(), DataTable)]</InArgument>
       </Assign.Value>
     </Assign>
-
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: File Name">
-      <InArgument x:TypeArguments="x:String">File Name</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Document Type">
-      <InArgument x:TypeArguments="x:String">Document Type</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Invoice Number">
-      <InArgument x:TypeArguments="x:String">Invoice Number</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Invoice Date">
-      <InArgument x:TypeArguments="x:String">Invoice Date</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: PO Number">
-      <InArgument x:TypeArguments="x:String">PO Number</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Vendor Name">
-      <InArgument x:TypeArguments="x:String">Vendor Name</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Bill To">
-      <InArgument x:TypeArguments="x:String">Bill To</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Subtotal">
-      <InArgument x:TypeArguments="x:String">Subtotal</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Tax">
-      <InArgument x:TypeArguments="x:String">Tax</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Shipping Charges">
-      <InArgument x:TypeArguments="x:String">Shipping Charges</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Total">
-      <InArgument x:TypeArguments="x:String">Total</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Payment Terms">
-      <InArgument x:TypeArguments="x:String">Payment Terms</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Due Date">
-      <InArgument x:TypeArguments="x:String">Due Date</InArgument>
-    </InvokeMethod>
-    <InvokeMethod MethodName="Add" TargetObject="[dtHeaderDetails.Columns]" DisplayName="Add column: Bank Details">
-      <InArgument x:TypeArguments="x:String">Bank Details</InArgument>
-    </InvokeMethod>
 
     <!-- One row per document from header_rows -->
     <ForEach x:TypeArguments="njl:JToken" DisplayName="For Each header row" Values="[ResultObj(&quot;header_rows&quot;)]">
