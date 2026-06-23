@@ -246,7 +246,13 @@ def _extract_response_text(response) -> str:
     try:
         return response.text
     except Exception as e:
-        raise RuntimeError(f"Could not read text from Gemini response: {e}") from e
+        candidate = response.candidates[0]
+        finish_reason = getattr(candidate, "finish_reason", None)
+        safety_ratings = getattr(candidate, "safety_ratings", None)
+        raise RuntimeError(
+            f"Could not read text from Gemini response "
+            f"(finish_reason={finish_reason}, safety_ratings={safety_ratings}): {e}"
+        ) from e
 
 
 MAX_RATE_LIMIT_RETRIES = 2
@@ -262,6 +268,15 @@ def _is_rate_limit_error(exc: Exception) -> bool:
 def _is_daily_quota_error(exc: Exception) -> bool:
     """PerDay quota errors won't resolve by waiting a few seconds, unlike PerMinute ones - don't retry these."""
     return "perday" in str(exc).lower().replace(" ", "")
+
+
+_AUTH_ERROR_MARKERS = ("api key not valid", "api_key_invalid", "401", "403", "permission_denied", "unauthenticated")
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    """A bad/invalid API key fails identically for every model - no point cascading through fallbacks for this."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _AUTH_ERROR_MARKERS)
 
 
 def _extract_retry_delay(exc: Exception) -> float:
@@ -292,10 +307,6 @@ def _friendly_error_message(prefix: str, error: Exception) -> str:
     if _is_daily_quota_error(error):
         return f"{prefix}: {error}\n\n{_DAILY_QUOTA_MARKER} (resets ~24h after first use today)."
     return f"{prefix}: {error}"
-
-
-def _is_daily_quota_message(error_text: Optional[str]) -> bool:
-    return bool(error_text) and _DAILY_QUOTA_MARKER in error_text
 
 
 def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: list | str) -> tuple[Optional[Any], Optional[str]]:
@@ -408,9 +419,9 @@ def extract_document(
 
         if data is None:
             last_error = error
-            if _is_daily_quota_message(error):
-                continue  # this model's quota is exhausted for today - try the next one (loop just ends if none left)
-            break
+            if _is_auth_error(error):
+                break  # a bad API key fails identically on every model - no point trying the rest
+            continue  # quota, transient, or content-generation issues might not affect a different model
 
         if not isinstance(data, dict):
             last_error = f"Expected a JSON object but got {type(data).__name__}."
@@ -423,8 +434,7 @@ def extract_document(
 
     if len(tried_names) > 1:
         result["error"] = (
-            f"All {len(tried_names)} models tried ({', '.join(tried_names)}) hit their free-tier daily quota. "
-            f"Last error: {last_error}"
+            f"All {len(tried_names)} models tried ({', '.join(tried_names)}) failed. Last error: {last_error}"
         )
     else:
         result["error"] = last_error or "Unknown extraction error."
