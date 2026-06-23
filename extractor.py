@@ -24,9 +24,19 @@ from typing import Any, Optional
 import google.generativeai as genai
 from PIL import Image
 
-# Google periodically retires old Gemini model versions, so this is a default,
-# not a hardcoded requirement — app.py exposes it as an overridable sidebar setting.
-DEFAULT_MODEL_NAME = "gemini-3.5-flash"
+# Google periodically retires/renames Gemini model versions, so these are sensible
+# defaults, not hardcoded requirements — app.py exposes the choice as a sidebar dropdown
+# (with a manual-entry escape hatch), and each one has its own separate free-tier quota,
+# which is what makes the cross-model fallback in extract_document() useful.
+KNOWN_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-flash-latest",
+]
+DEFAULT_MODEL_NAME = KNOWN_MODELS[0]
 
 MIME_TYPES = {
     "pdf": "application/pdf",
@@ -275,14 +285,17 @@ def _send_with_rate_limit_retry(chat, message, generation_config) -> tuple[Optio
     return None, last_error
 
 
+_DAILY_QUOTA_MARKER = "DAILY quota for this model is exhausted"
+
+
 def _friendly_error_message(prefix: str, error: Exception) -> str:
     if _is_daily_quota_error(error):
-        return (
-            f"{prefix}: {error}\n\nThis model's free-tier DAILY quota is exhausted (resets ~24h after first use "
-            "today). Switch to a different model in the sidebar (e.g. gemini-2.5-flash or gemini-2.0-flash) to "
-            "keep working today, or wait for the quota to reset."
-        )
+        return f"{prefix}: {error}\n\n{_DAILY_QUOTA_MARKER} (resets ~24h after first use today)."
     return f"{prefix}: {error}"
+
+
+def _is_daily_quota_message(error_text: Optional[str]) -> bool:
+    return bool(error_text) and _DAILY_QUOTA_MARKER in error_text
 
 
 def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: list | str) -> tuple[Optional[Any], Optional[str]]:
@@ -337,6 +350,8 @@ def extract_document(
     doc_type: str,
     custom_fields: list[dict] | None = None,
     excluded_fields: set | None = None,
+    primary_model_name: str = "",
+    fallback_models: list[str] | None = None,
 ) -> dict:
     """
     Extract structured data from a single document using Gemini.
@@ -344,8 +359,14 @@ def extract_document(
     custom_fields: optional list of {"name", "description", "scope", "is_list"} to extract in addition
                    to the built-in schema (scope is "All" or one of DOC_TYPES).
     excluded_fields: optional set of built-in field names to skip extracting entirely.
+    primary_model_name: the name `model` was constructed with, used only to label results and to
+                   avoid re-trying the same model as its own fallback.
+    fallback_models: models to try, in order, if the primary model's free-tier DAILY quota is
+                   exhausted (each model has a separate quota). Defaults to KNOWN_MODELS minus
+                   primary_model_name. Per-minute rate limits are already retried within a single
+                   model by call_gemini_with_json_retry and never trigger a model switch.
 
-    Returns a dict: {filename, doc_type, success, data, error}
+    Returns a dict: {filename, doc_type, success, data, error, model_used}
     """
     result = {"filename": filename, "doc_type": doc_type, "success": False, "data": None, "error": None}
 
@@ -369,16 +390,42 @@ def extract_document(
             "page images. Treat them as one single document and combine information across all pages."
         )
 
-    data, error = call_gemini_with_json_retry(model, [prompt, *file_parts])
+    if fallback_models is None:
+        fallback_models = [m for m in KNOWN_MODELS if m != primary_model_name]
 
-    if data is None:
-        result["error"] = error or "Unknown extraction error."
+    candidates = [(primary_model_name or "selected model", model)]
+    for name in fallback_models:
+        try:
+            candidates.append((name, genai.GenerativeModel(name)))
+        except Exception:
+            continue  # name not constructible (e.g. retired) - just skip it, not fatal
+
+    tried_names = []
+    last_error = None
+    for name, candidate_model in candidates:
+        tried_names.append(name)
+        data, error = call_gemini_with_json_retry(candidate_model, [prompt, *file_parts])
+
+        if data is None:
+            last_error = error
+            if _is_daily_quota_message(error):
+                continue  # this model's quota is exhausted for today - try the next one (loop just ends if none left)
+            break
+
+        if not isinstance(data, dict):
+            last_error = f"Expected a JSON object but got {type(data).__name__}."
+            continue
+
+        result["success"] = True
+        result["data"] = data
+        result["model_used"] = name
         return result
 
-    if not isinstance(data, dict):
-        result["error"] = f"Expected a JSON object but got {type(data).__name__}."
-        return result
-
-    result["success"] = True
-    result["data"] = data
+    if len(tried_names) > 1:
+        result["error"] = (
+            f"All {len(tried_names)} models tried ({', '.join(tried_names)}) hit their free-tier daily quota. "
+            f"Last error: {last_error}"
+        )
+    else:
+        result["error"] = last_error or "Unknown extraction error."
     return result

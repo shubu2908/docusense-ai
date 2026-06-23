@@ -25,6 +25,7 @@ from excel_builder import build_excel_report
 from extractor import (
     DEFAULT_MODEL_NAME,
     DOC_TYPES,
+    KNOWN_MODELS,
     configure_api,
     extract_document,
     get_all_field_names,
@@ -109,12 +110,22 @@ with st.sidebar:
     )
     st.markdown("[Get a free Gemini API key →](https://aistudio.google.com/app/apikey)")
 
-    model_name = st.text_input(
+    model_choice = st.selectbox(
         "Gemini Model",
-        value=DEFAULT_MODEL_NAME,
-        help="Google periodically retires older model versions. If you get a 404/'not found' error, "
-        "run genai.list_models() with your key and paste a current flash-tier model name here.",
+        KNOWN_MODELS + ["Other (type manually)"],
+        index=0,
+        help="If one model's free-tier daily quota runs out, extraction automatically falls back "
+        "through the other models in this list before giving up — each has its own separate quota.",
     )
+    if model_choice == "Other (type manually)":
+        model_name = st.text_input(
+            "Custom model name",
+            value=DEFAULT_MODEL_NAME,
+            label_visibility="collapsed",
+            help="Use this if your key has access to a model not in the dropdown above.",
+        )
+    else:
+        model_name = model_choice
 
     st.divider()
     st.subheader("📊 Processing Stats")
@@ -257,6 +268,7 @@ if analyse_clicked:
                 model, file.name, file_bytes, doc_type,
                 custom_fields=st.session_state.custom_fields,
                 excluded_fields=st.session_state.excluded_fields,
+                primary_model_name=model_name,
             )
         except Exception as e:
             result = {"filename": file.name, "doc_type": doc_type, "success": False, "data": None, "error": str(e)}
@@ -316,6 +328,9 @@ if results is not None:
             icon = "✅" if r["success"] else "❌"
             with st.expander(f"{icon} {r['filename']} — {r['doc_type']}"):
                 if r["success"]:
+                    model_used = r.get("model_used")
+                    if model_used and model_used != model_name:
+                        st.caption(f"⚡ Extracted with **{model_used}** — '{model_name}' had hit its daily quota.")
                     st.json(r["data"])
                 else:
                     st.error(r["error"])

@@ -22,14 +22,15 @@ from extractor import DEFAULT_MODEL_NAME, configure_api, extract_document
 
 
 def _extract_batch(api_key: str, file_paths: list, model_name: str, doc_type: str) -> list:
-    model = configure_api(api_key, model_name.strip() or DEFAULT_MODEL_NAME)
+    resolved_model_name = model_name.strip() or DEFAULT_MODEL_NAME
+    model = configure_api(api_key, resolved_model_name)
     results = []
     for path in file_paths:
         filename = os.path.basename(path)
         try:
             with open(path, "rb") as f:
                 file_bytes = f.read()
-            result = extract_document(model, filename, file_bytes, doc_type)
+            result = extract_document(model, filename, file_bytes, doc_type, primary_model_name=resolved_model_name)
         except Exception as e:
             result = {"filename": filename, "doc_type": doc_type, "success": False, "data": None, "error": str(e)}
         results.append(result)
@@ -69,7 +70,10 @@ def process_documents_to_excel(
     except Exception as e:
         return json.dumps({"success": False, "error": f"Excel report build failed: {e}"})
 
-    summary = [{"filename": r["filename"], "success": r["success"], "error": r["error"]} for r in results]
+    summary = [
+        {"filename": r["filename"], "success": r["success"], "error": r["error"], "model_used": r.get("model_used")}
+        for r in results
+    ]
     return json.dumps({"success": True, "excel_path": output_excel_path, "results": summary})
 
 
@@ -122,13 +126,14 @@ def extract_single_document(api_key: str, file_path: str, model_name: str = "", 
     """
     filename = os.path.basename(file_path)
     try:
-        model = configure_api(api_key, model_name.strip() or DEFAULT_MODEL_NAME)
+        resolved_model_name = model_name.strip() or DEFAULT_MODEL_NAME
+        model = configure_api(api_key, resolved_model_name)
         with open(file_path, "rb") as f:
             file_bytes = f.read()
-        result = extract_document(model, filename, file_bytes, doc_type)
+        result = extract_document(model, filename, file_bytes, doc_type, primary_model_name=resolved_model_name)
     except Exception as e:
         return json.dumps({"success": False, "filename": filename, "error": str(e)})
 
     if not result["success"]:
         return json.dumps({"success": False, "filename": filename, "error": result["error"]})
-    return json.dumps({"success": True, "filename": filename, "data": result["data"]})
+    return json.dumps({"success": True, "filename": filename, "data": result["data"], "model_used": result.get("model_used")})
