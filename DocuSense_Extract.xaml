@@ -1,15 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Activity mc:Ignorable="sap sap2010" x:Class="DocuSense_Extract"
-  xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"
-  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-  xmlns:njl="clr-namespace:Newtonsoft.Json.Linq;assembly=Newtonsoft.Json"
-  xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"
-  xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"
-  xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"
-  xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=mscorlib"
-  xmlns:sd="clr-namespace:System.Data;assembly=System.Data"
-  xmlns:ui="http://schemas.uipath.com/workflow/activities">
+<Activity mc:Ignorable="sap sap2010" x:Class="DocuSense_Extract" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:njl="clr-namespace:Newtonsoft.Json.Linq;assembly=Newtonsoft.Json" xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation" xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation" xmlns:scg="clr-namespace:System.Collections.Generic;assembly=System.Private.CoreLib" xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=System.Private.CoreLib" xmlns:sd="clr-namespace:System.Data;assembly=System.Data.Common" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <x:Members>
     <x:Property Name="in_ApiKey" Type="InArgument(x:String)" />
     <x:Property Name="in_FilePaths" Type="InArgument(x:String)" />
@@ -18,43 +7,36 @@
     <x:Property Name="in_WorkingDirectory" Type="InArgument(x:String)" />
     <x:Property Name="in_OutputExcelPath" Type="InArgument(x:String)" />
   </x:Members>
+  <sap2010:WorkflowViewState.IdRef>ActivityBuilder_1</sap2010:WorkflowViewState.IdRef>
   <TextExpression.NamespacesForImplementation>
     <sco:Collection x:TypeArguments="x:String">
-      <x:String>System</x:String>
-      <x:String>System.IO</x:String>
-      <x:String>System.Data</x:String>
+      <x:String>GlobalConstantsNamespace</x:String>
+      <x:String>GlobalVariablesNamespace</x:String>
       <x:String>Newtonsoft.Json.Linq</x:String>
+      <x:String>System</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Collections.ObjectModel</x:String>
+      <x:String>System.Data</x:String>
+      <x:String>System.IO</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>UiPath.Core</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
     </sco:Collection>
   </TextExpression.NamespacesForImplementation>
   <TextExpression.ReferencesForImplementation>
     <sco:Collection x:TypeArguments="AssemblyReference">
-      <AssemblyReference>System.Private.CoreLib</AssemblyReference>
-      <AssemblyReference>System.IO.FileSystem</AssemblyReference>
-      <AssemblyReference>System.Data.Common</AssemblyReference>
       <AssemblyReference>Newtonsoft.Json</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.TypeConverter</AssemblyReference>
+      <AssemblyReference>System.Data.Common</AssemblyReference>
+      <AssemblyReference>System.IO.FileSystem</AssemblyReference>
+      <AssemblyReference>System.Linq</AssemblyReference>
+      <AssemblyReference>System.ObjectModel</AssemblyReference>
+      <AssemblyReference>System.Private.CoreLib</AssemblyReference>
+      <AssemblyReference>UiPath.System.Activities</AssemblyReference>
+      <AssemblyReference>UiPath.UiAutomation.Activities</AssemblyReference>
     </sco:Collection>
   </TextExpression.ReferencesForImplementation>
-
-  <!--
-    DocuSense_Extract.xaml
-
-    Input arguments (fill these in via the auto-generated input form when you press
-    F5/Debug in Studio, or wire them from a parent workflow):
-      in_ApiKey            - your Gemini API key
-      in_FilePaths         - "|"-delimited absolute file paths, e.g. C:\inv\a.pdf|C:\inv\b.tif
-      in_DocType           - e.g. "Invoice"
-      in_PythonExePath     - full path to python.exe (the one with this project's pip packages installed)
-      in_WorkingDirectory  - full path to the docusense folder (contains uipath_cli.py)
-      in_OutputExcelPath   - full path to write the Header Details .xlsx to
-
-    Calls uipath_cli.py (to-rows mode), polls for its result file instead of relying on
-    captured stdout, builds a DataTable from the "header_rows" JSON array, and writes it
-    to Excel with Write Range. Line items aren't included in this first version — same
-    pattern (a second DataTable from "line_item_rows", a second Write Range call) extends
-    it once this part is confirmed working in your environment.
-  -->
-
-  <Sequence DisplayName="DocuSense Extract - Header Details to Excel">
+  <Sequence DisplayName="DocuSense Extract - Header Details to Excel" sap2010:WorkflowViewState.IdRef="Sequence_2">
     <Sequence.Variables>
       <Variable x:TypeArguments="x:String" Name="ResultJsonPath" />
       <Variable x:TypeArguments="x:String" Name="ResultJsonString" />
@@ -63,10 +45,14 @@
       <Variable x:TypeArguments="sd:DataTable" Name="dtHeaderDetails" />
       <Variable x:TypeArguments="njl:JToken" Name="CurrentRow" />
       <Variable x:TypeArguments="x:Int32" Name="WaitAttempts" />
+      <Variable x:TypeArguments="sd:DataColumn" Name="TempColumn" />
     </Sequence.Variables>
-
-    <!-- Build the path the CLI will write its JSON result to -->
-    <Assign DisplayName="Set Result JSON Path">
+    <sap:WorkflowViewStateService.ViewState>
+      <scg:Dictionary x:TypeArguments="x:String, x:Object">
+        <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+      </scg:Dictionary>
+    </sap:WorkflowViewStateService.ViewState>
+    <Assign DisplayName="Set Result JSON Path" sap2010:WorkflowViewState.IdRef="Assign_1">
       <Assign.To>
         <OutArgument x:TypeArguments="x:String">[ResultJsonPath]</OutArgument>
       </Assign.To>
@@ -74,15 +60,8 @@
         <InArgument x:TypeArguments="x:String">[Path.Combine(in_WorkingDirectory, "result_" &amp; Guid.NewGuid().ToString("N") &amp; ".json")]</InArgument>
       </Assign.Value>
     </Assign>
-
-    <!-- Launch uipath_cli.py -->
-    <ui:StartProcess DisplayName="Run uipath_cli.py (to-rows)"
-      FileName="[in_PythonExePath]"
-      WorkingDirectory="[in_WorkingDirectory]"
-      Arguments="[String.Format(&quot;uipath_cli.py to-rows --api-key &quot;&quot;{0}&quot;&quot; --files &quot;&quot;{1}&quot;&quot; --doc-type &quot;&quot;{2}&quot;&quot; --result-file &quot;&quot;{3}&quot;&quot;&quot;, in_ApiKey, in_FilePaths, in_DocType, ResultJsonPath)]" />
-
-    <!-- Poll for the result file rather than assuming Start Process blocked until exit -->
-    <Assign DisplayName="Reset wait counter">
+    <ui:StartProcess Arguments="[String.Format(&quot;uipath_cli.py to-rows --api-key &quot;&quot;{0}&quot;&quot; --files &quot;&quot;{1}&quot;&quot; --doc-type &quot;&quot;{2}&quot;&quot; --result-file &quot;&quot;{3}&quot;&quot;&quot;, in_ApiKey, in_FilePaths, in_DocType, ResultJsonPath)]" DisplayName="Run uipath_cli.py (to-rows)" FileName="[in_PythonExePath]" sap2010:WorkflowViewState.IdRef="StartProcess_1" WorkingDirectory="[in_WorkingDirectory]" />
+    <Assign DisplayName="Reset wait counter" sap2010:WorkflowViewState.IdRef="Assign_2">
       <Assign.To>
         <OutArgument x:TypeArguments="x:Int32">[WaitAttempts]</OutArgument>
       </Assign.To>
@@ -90,10 +69,10 @@
         <InArgument x:TypeArguments="x:Int32">0</InArgument>
       </Assign.Value>
     </Assign>
-    <While DisplayName="Wait for result file (up to ~60s)" Condition="[Not File.Exists(ResultJsonPath) And WaitAttempts &lt; 60]">
-      <Sequence>
-        <Delay Duration="[TimeSpan.FromSeconds(1)]" />
-        <Assign DisplayName="Increment wait counter">
+    <While DisplayName="Wait for result file (up to ~60s)" sap2010:WorkflowViewState.IdRef="While_1" Condition="[Not File.Exists(ResultJsonPath) And WaitAttempts &lt; 60]">
+      <Sequence sap2010:WorkflowViewState.IdRef="Sequence_1">
+        <Delay Duration="[TimeSpan.FromSeconds(1)]" sap2010:WorkflowViewState.IdRef="Delay_1" />
+        <Assign DisplayName="Increment wait counter" sap2010:WorkflowViewState.IdRef="Assign_3">
           <Assign.To>
             <OutArgument x:TypeArguments="x:Int32">[WaitAttempts]</OutArgument>
           </Assign.To>
@@ -103,15 +82,12 @@
         </Assign>
       </Sequence>
     </While>
-
-    <If Condition="[Not File.Exists(ResultJsonPath)]" DisplayName="Check result file actually appeared">
+    <If Condition="[Not File.Exists(ResultJsonPath)]" DisplayName="Check result file actually appeared" sap2010:WorkflowViewState.IdRef="If_1">
       <If.Then>
-        <Throw Exception="[New Exception(&quot;uipath_cli.py did not produce a result file within 60s - check in_PythonExePath and in_WorkingDirectory.&quot;)]" />
+        <Throw Exception="[New Exception(&quot;uipath_cli.py did not produce a result file within 60s - check in_PythonExePath and in_WorkingDirectory.&quot;)]" sap2010:WorkflowViewState.IdRef="Throw_1" />
       </If.Then>
     </If>
-
-    <!-- Read + parse the JSON result -->
-    <Assign DisplayName="Read result JSON">
+    <Assign DisplayName="Read result JSON" sap2010:WorkflowViewState.IdRef="Assign_4">
       <Assign.To>
         <OutArgument x:TypeArguments="x:String">[ResultJsonString]</OutArgument>
       </Assign.To>
@@ -119,7 +95,7 @@
         <InArgument x:TypeArguments="x:String">[File.ReadAllText(ResultJsonPath)]</InArgument>
       </Assign.Value>
     </Assign>
-    <Assign DisplayName="Parse JSON">
+    <Assign DisplayName="Parse JSON" sap2010:WorkflowViewState.IdRef="Assign_5">
       <Assign.To>
         <OutArgument x:TypeArguments="njl:JObject">[ResultObj]</OutArgument>
       </Assign.To>
@@ -127,7 +103,7 @@
         <InArgument x:TypeArguments="njl:JObject">[JObject.Parse(ResultJsonString)]</InArgument>
       </Assign.Value>
     </Assign>
-    <Assign DisplayName="Read success flag">
+    <Assign DisplayName="Read success flag" sap2010:WorkflowViewState.IdRef="Assign_6">
       <Assign.To>
         <OutArgument x:TypeArguments="x:Boolean">[IsSuccess]</OutArgument>
       </Assign.To>
@@ -135,73 +111,139 @@
         <InArgument x:TypeArguments="x:Boolean">[ResultObj("success").ToObject(Of Boolean)]</InArgument>
       </Assign.Value>
     </Assign>
-
-    <If Condition="[Not IsSuccess]" DisplayName="Check extraction call succeeded">
+    <If Condition="[Not IsSuccess]" DisplayName="Check extraction call succeeded" sap2010:WorkflowViewState.IdRef="If_2">
       <If.Then>
-        <Throw Exception="[New Exception(&quot;uipath_cli.py reported failure: &quot; &amp; CStr(ResultObj(&quot;error&quot;)))]" />
+        <Throw Exception="[New Exception(&quot;uipath_cli.py reported failure: &quot; &amp; CStr(ResultObj(&quot;error&quot;)))]" sap2010:WorkflowViewState.IdRef="Throw_2" />
       </If.Then>
     </If>
-
-    <!-- Build the Header Details DataTable schema in one expression (avoids InvokeMethod's
-         argument-binding issues with generically-typed properties like TargetObject) -->
-    <Assign DisplayName="Create dtHeaderDetails with columns">
+    <Assign DisplayName="Create empty dtHeaderDetails">
       <Assign.To>
         <OutArgument x:TypeArguments="sd:DataTable">[dtHeaderDetails]</OutArgument>
       </Assign.To>
       <Assign.Value>
-        <InArgument x:TypeArguments="sd:DataTable">[CType((Function()
-    Dim dt As New DataTable()
-    dt.Columns.Add("File Name")
-    dt.Columns.Add("Document Type")
-    dt.Columns.Add("Invoice Number")
-    dt.Columns.Add("Invoice Date")
-    dt.Columns.Add("PO Number")
-    dt.Columns.Add("Vendor Name")
-    dt.Columns.Add("Bill To")
-    dt.Columns.Add("Subtotal")
-    dt.Columns.Add("Tax")
-    dt.Columns.Add("Shipping Charges")
-    dt.Columns.Add("Total")
-    dt.Columns.Add("Payment Terms")
-    dt.Columns.Add("Due Date")
-    dt.Columns.Add("Bank Details")
-    Return dt
-End Function)(), DataTable)]</InArgument>
+        <InArgument x:TypeArguments="sd:DataTable">[New DataTable()]</InArgument>
       </Assign.Value>
     </Assign>
-
-    <!-- One row per document from header_rows -->
-    <ForEach x:TypeArguments="njl:JToken" DisplayName="For Each header row" Values="[ResultObj(&quot;header_rows&quot;)]">
+    <Assign DisplayName="Add column: File Name">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("File Name")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Document Type">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Document Type")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Invoice Number">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Invoice Number")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Invoice Date">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Invoice Date")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: PO Number">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("PO Number")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Vendor Name">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Vendor Name")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Bill To">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Bill To")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Subtotal">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Subtotal")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Tax">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Tax")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Shipping Charges">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Shipping Charges")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Total">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Total")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Payment Terms">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Payment Terms")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Due Date">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Due Date")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Add column: Bank Details">
+      <Assign.To>
+        <OutArgument x:TypeArguments="sd:DataColumn">[TempColumn]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="sd:DataColumn">[dtHeaderDetails.Columns.Add("Bank Details")]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <ForEach x:TypeArguments="njl:JToken" DisplayName="For Each header row" sap2010:WorkflowViewState.IdRef="ForEach`1_1" Values="[ResultObj(&quot;header_rows&quot;)]">
       <ActivityAction x:TypeArguments="njl:JToken">
         <ActivityAction.Argument>
           <DelegateInArgument x:TypeArguments="njl:JToken" Name="CurrentRow" />
         </ActivityAction.Argument>
-        <ui:AddDataRow DisplayName="Add row to dtHeaderDetails"
-          DataTable="[dtHeaderDetails]"
-          ArrayRow="[New Object() {
-            CStr(CurrentRow(&quot;File Name&quot;)),
-            CStr(CurrentRow(&quot;Document Type&quot;)),
-            CStr(CurrentRow(&quot;Invoice Number&quot;)),
-            CStr(CurrentRow(&quot;Invoice Date&quot;)),
-            CStr(CurrentRow(&quot;PO Number&quot;)),
-            CStr(CurrentRow(&quot;Vendor Name&quot;)),
-            CStr(CurrentRow(&quot;Bill To&quot;)),
-            CStr(CurrentRow(&quot;Subtotal&quot;)),
-            CStr(CurrentRow(&quot;Tax&quot;)),
-            CStr(CurrentRow(&quot;Shipping Charges&quot;)),
-            CStr(CurrentRow(&quot;Total&quot;)),
-            CStr(CurrentRow(&quot;Payment Terms&quot;)),
-            CStr(CurrentRow(&quot;Due Date&quot;)),
-            CStr(CurrentRow(&quot;Bank Details&quot;))}]" />
+        <ui:AddDataRow DataRow="{x:Null}" ArrayRow="[New Object() {             CStr(CurrentRow(&quot;File Name&quot;)),             CStr(CurrentRow(&quot;Document Type&quot;)),             CStr(CurrentRow(&quot;Invoice Number&quot;)),             CStr(CurrentRow(&quot;Invoice Date&quot;)),             CStr(CurrentRow(&quot;PO Number&quot;)),             CStr(CurrentRow(&quot;Vendor Name&quot;)),             CStr(CurrentRow(&quot;Bill To&quot;)),             CStr(CurrentRow(&quot;Subtotal&quot;)),             CStr(CurrentRow(&quot;Tax&quot;)),             CStr(CurrentRow(&quot;Shipping Charges&quot;)),             CStr(CurrentRow(&quot;Total&quot;)),             CStr(CurrentRow(&quot;Payment Terms&quot;)),             CStr(CurrentRow(&quot;Due Date&quot;)),             CStr(CurrentRow(&quot;Bank Details&quot;))}]" DataTable="[dtHeaderDetails]" DisplayName="Add row to dtHeaderDetails" sap2010:WorkflowViewState.IdRef="AddDataRow_1" />
       </ActivityAction>
     </ForEach>
-
-    <!-- Export to Excel -->
-    <ui:WriteRange DisplayName="Write Header Details to Excel"
-      WorkbookPath="[in_OutputExcelPath]"
-      SheetName="Header Details"
-      DataTable="[dtHeaderDetails]"
-      AddHeaders="True" />
-
+    <ui:WriteRange StartingCell="{x:Null}" WorkbookPathResource="{x:Null}" DataTable="[dtHeaderDetails]" DisplayName="Write Header Details to Excel" sap2010:WorkflowViewState.IdRef="WriteRange_1" SheetName="Header Details" WorkbookPath="[in_OutputExcelPath]" />
   </Sequence>
 </Activity>
