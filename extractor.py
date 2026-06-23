@@ -249,24 +249,40 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     return "429" in text or "ResourceExhausted" in type(exc).__name__ or "quota" in text.lower()
 
 
+def _is_daily_quota_error(exc: Exception) -> bool:
+    """PerDay quota errors won't resolve by waiting a few seconds, unlike PerMinute ones - don't retry these."""
+    return "perday" in str(exc).lower().replace(" ", "")
+
+
 def _extract_retry_delay(exc: Exception) -> float:
     match = _RETRY_DELAY_RE.search(str(exc))
     return float(match.group(1)) + 1 if match else DEFAULT_RATE_LIMIT_DELAY
 
 
 def _send_with_rate_limit_retry(chat, message, generation_config) -> tuple[Optional[Any], Optional[Exception]]:
-    """Sends a chat message, automatically waiting and retrying if Gemini returns a 429 rate-limit error."""
+    """Sends a chat message, automatically waiting and retrying on a per-minute 429 rate-limit error.
+    Per-day quota errors are not retried, since waiting a few seconds can never resolve those."""
     last_error: Optional[Exception] = None
     for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
         try:
             return chat.send_message(message, generation_config=generation_config), None
         except Exception as e:
             last_error = e
-            if _is_rate_limit_error(e) and attempt < MAX_RATE_LIMIT_RETRIES:
+            if _is_rate_limit_error(e) and not _is_daily_quota_error(e) and attempt < MAX_RATE_LIMIT_RETRIES:
                 time.sleep(_extract_retry_delay(e))
                 continue
             return None, e
     return None, last_error
+
+
+def _friendly_error_message(prefix: str, error: Exception) -> str:
+    if _is_daily_quota_error(error):
+        return (
+            f"{prefix}: {error}\n\nThis model's free-tier DAILY quota is exhausted (resets ~24h after first use "
+            "today). Switch to a different model in the sidebar (e.g. gemini-2.5-flash or gemini-2.0-flash) to "
+            "keep working today, or wait for the quota to reset."
+        )
+    return f"{prefix}: {error}"
 
 
 def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: list | str) -> tuple[Optional[Any], Optional[str]]:
@@ -285,7 +301,7 @@ def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: l
     chat = model.start_chat()
     response, error = _send_with_rate_limit_retry(chat, first_message, generation_config)
     if error is not None:
-        return None, f"Gemini request failed: {error}"
+        return None, _friendly_error_message("Gemini request failed", error)
     try:
         text = _extract_response_text(response)
     except Exception as e:
@@ -297,7 +313,7 @@ def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: l
 
     response2, error2 = _send_with_rate_limit_retry(chat, JSON_RETRY_INSTRUCTION, generation_config)
     if error2 is not None:
-        return None, f"Gemini retry request failed: {error2}"
+        return None, _friendly_error_message("Gemini retry request failed", error2)
     try:
         text2 = _extract_response_text(response2)
     except Exception as e:
