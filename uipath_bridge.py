@@ -21,7 +21,11 @@ from excel_builder import build_excel_report, header_detail_row, line_item_rows
 from extractor import DEFAULT_MODEL_NAME, configure_api, extract_document
 
 
-def _extract_batch(api_key: str, file_paths: list, model_name: str, doc_type: str) -> list:
+def _parse_csv_set(value: str) -> set:
+    return {v.strip() for v in (value or "").split(",") if v.strip()}
+
+
+def _extract_batch(api_key: str, file_paths: list, model_name: str, doc_type: str, required_fields: set | None = None) -> list:
     resolved_model_name = model_name.strip() or DEFAULT_MODEL_NAME
     model = configure_api(api_key, resolved_model_name)
     results = []
@@ -30,7 +34,10 @@ def _extract_batch(api_key: str, file_paths: list, model_name: str, doc_type: st
         try:
             with open(path, "rb") as f:
                 file_bytes = f.read()
-            result = extract_document(model, filename, file_bytes, doc_type, primary_model_name=resolved_model_name)
+            result = extract_document(
+                model, filename, file_bytes, doc_type,
+                required_fields=required_fields, primary_model_name=resolved_model_name,
+            )
         except Exception as e:
             result = {"filename": filename, "doc_type": doc_type, "success": False, "data": None, "error": str(e)}
         results.append(result)
@@ -43,6 +50,7 @@ def process_documents_to_excel(
     output_excel_path: str,
     model_name: str = "",
     doc_type: str = "Invoice",
+    required_fields_csv: str = "",
 ) -> str:
     """
     Extracts every file listed in file_paths_json (a JSON array of absolute file paths) via
@@ -54,12 +62,16 @@ def process_documents_to_excel(
 
     One file failing extraction does not stop the batch — it shows up with "success": false
     in "results" and the Excel report still builds from whatever succeeded.
+
+    required_fields_csv: optional comma-separated field names that must be present - missing
+    ones (plus Gemini's own "Low" confidence fields and a Subtotal+Tax+Shipping vs Total
+    mismatch) show up as "Validation Status"/"Validation Notes" columns in Header Details.
     """
     try:
         file_paths = json.loads(file_paths_json)
         if not isinstance(file_paths, list) or not file_paths:
             return json.dumps({"success": False, "error": "file_paths_json must be a non-empty JSON array of file paths."})
-        results = _extract_batch(api_key, file_paths, model_name, doc_type)
+        results = _extract_batch(api_key, file_paths, model_name, doc_type, _parse_csv_set(required_fields_csv))
     except Exception as e:
         return json.dumps({"success": False, "error": f"Setup failed: {e}"})
 
@@ -82,6 +94,7 @@ def process_documents_to_rows(
     file_paths_json: str,
     model_name: str = "",
     doc_type: str = "Invoice",
+    required_fields_csv: str = "",
 ) -> str:
     """
     Extracts every file listed in file_paths_json and returns flat JSON rows — one row per
@@ -91,20 +104,21 @@ def process_documents_to_rows(
 
         {
           "success": true,
-          "header_rows": [{"File Name": ..., "Document Type": ..., ...}, ...],
+          "header_rows": [{"File Name": ..., "Document Type": ..., ..., "Validation Status": ..., "Validation Notes": ...}, ...],
           "line_item_rows": [{"Source Doc": ..., "Doc Number": ..., ...}, ...],
           "errors": [{"filename": ..., "error": ...}, ...]
         }
         {"success": false, "error": "..."}
 
     Use this instead of process_documents_to_excel() when you want the data back as UiPath
-    DataTables rather than an already-built Excel file.
+    DataTables rather than an already-built Excel file. required_fields_csv: see
+    process_documents_to_excel().
     """
     try:
         file_paths = json.loads(file_paths_json)
         if not isinstance(file_paths, list) or not file_paths:
             return json.dumps({"success": False, "error": "file_paths_json must be a non-empty JSON array of file paths."})
-        results = _extract_batch(api_key, file_paths, model_name, doc_type)
+        results = _extract_batch(api_key, file_paths, model_name, doc_type, _parse_csv_set(required_fields_csv))
     except Exception as e:
         return json.dumps({"success": False, "error": f"Setup failed: {e}"})
 
@@ -115,14 +129,18 @@ def process_documents_to_rows(
     return json.dumps({"success": True, "header_rows": header_rows, "line_item_rows": item_rows, "errors": errors})
 
 
-def extract_single_document(api_key: str, file_path: str, model_name: str = "", doc_type: str = "Invoice") -> str:
+def extract_single_document(
+    api_key: str, file_path: str, model_name: str = "", doc_type: str = "Invoice", required_fields_csv: str = ""
+) -> str:
     """
     Extracts one document and returns its structured data as a JSON string, with no Excel
     file produced — useful when a workflow wants the fields directly (e.g. to populate a
     form or compare against an ERP record):
 
-        {"success": true, "filename": "...", "data": {...}}
+        {"success": true, "filename": "...", "data": {...}, "validation_issues": [...]}
         {"success": false, "filename": "...", "error": "..."}
+
+    required_fields_csv: see process_documents_to_excel().
     """
     filename = os.path.basename(file_path)
     try:
@@ -130,10 +148,16 @@ def extract_single_document(api_key: str, file_path: str, model_name: str = "", 
         model = configure_api(api_key, resolved_model_name)
         with open(file_path, "rb") as f:
             file_bytes = f.read()
-        result = extract_document(model, filename, file_bytes, doc_type, primary_model_name=resolved_model_name)
+        result = extract_document(
+            model, filename, file_bytes, doc_type,
+            required_fields=_parse_csv_set(required_fields_csv), primary_model_name=resolved_model_name,
+        )
     except Exception as e:
         return json.dumps({"success": False, "filename": filename, "error": str(e)})
 
     if not result["success"]:
         return json.dumps({"success": False, "filename": filename, "error": result["error"]})
-    return json.dumps({"success": True, "filename": filename, "data": result["data"], "model_used": result.get("model_used")})
+    return json.dumps({
+        "success": True, "filename": filename, "data": result["data"],
+        "model_used": result.get("model_used"), "validation_issues": result.get("validation_issues", []),
+    })

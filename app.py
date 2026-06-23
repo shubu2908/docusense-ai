@@ -59,6 +59,7 @@ _DEFAULTS = {
     "processing_stats": None,
     "excluded_fields": set(),
     "custom_fields": [],
+    "required_fields": set(),
 }
 for _key, _value in _DEFAULTS.items():
     st.session_state.setdefault(_key, _value)
@@ -191,6 +192,20 @@ with st.expander("Remove fields you don't need, or add fields of your own"):
         )
     )
 
+    st.markdown("**Mark fields as required** — flagged as a validation issue if missing, alongside any "
+                 "field Gemini itself reports low confidence in, and a Subtotal+Tax+Shipping vs Total mismatch")
+    requirable_field_names = [f for f in all_field_names if f not in st.session_state.excluded_fields] + [
+        cf["name"] for cf in st.session_state.custom_fields
+    ]
+    st.session_state.required_fields = set(
+        st.multiselect(
+            "Required fields",
+            options=requirable_field_names,
+            default=sorted(st.session_state.required_fields & set(requirable_field_names)),
+            label_visibility="collapsed",
+        )
+    )
+
     st.markdown("**Add a custom field**")
     cf_cols = st.columns([2, 3, 2, 1, 1])
     new_name = cf_cols[0].text_input("Field name", key="new_field_name", placeholder="e.g. department", label_visibility="collapsed")
@@ -268,6 +283,7 @@ if analyse_clicked:
                 model, file.name, file_bytes, doc_type,
                 custom_fields=st.session_state.custom_fields,
                 excluded_fields=st.session_state.excluded_fields,
+                required_fields=st.session_state.required_fields,
                 primary_model_name=model_name,
             )
         except Exception as e:
@@ -317,11 +333,13 @@ if results is not None:
     with tab1:
         ok_docs = [r for r in results if r["success"]]
         total_value = sum(normalize_amount(r["data"].get("total")) or 0.0 for r in ok_docs)
+        needs_review = sum(1 for r in ok_docs if r.get("validation_issues"))
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Documents Processed", len(results))
         c2.metric("Successful Extractions", len(ok_docs))
         c3.metric("Total Value", f"{total_value:,.2f}")
+        c4.metric("Needs Review", needs_review)
 
     with tab2:
         for r in results:
@@ -331,6 +349,9 @@ if results is not None:
                     model_used = r.get("model_used")
                     if model_used and model_used != model_name:
                         st.caption(f"⚡ Extracted with **{model_used}** — '{model_name}' had hit its daily quota.")
+                    issues = r.get("validation_issues") or []
+                    if issues:
+                        st.warning("**Needs review:**\n" + "\n".join(f"- {issue}" for issue in issues))
                     st.json(r["data"])
                 else:
                     st.error(r["error"])

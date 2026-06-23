@@ -170,6 +170,7 @@ def build_extraction_prompt(
             list_field_names.add(name)
 
     skeleton = _build_field_skeleton(all_fields, list_field_names)
+    skeleton["field_confidence"] = {name: "High" for name in all_fields}
 
     field_lines = "\n".join(f'- "{k}": {v}' for k, v in all_fields.items())
 
@@ -180,6 +181,12 @@ The user has labeled this document as: {doc_type}
 Carefully read the attached document and extract the following fields:
 
 {field_lines}
+
+You must also self-assess your own extraction by including one extra top-level key, "field_confidence" - an
+object mapping every field name above to your confidence in that specific extracted value: "High", "Medium",
+or "Low". Use "Low" whenever a value was hard to read, ambiguous, contradictory, partially cut off, or you
+are guessing rather than reading it directly from the document. Be honest and critical here - this is used to
+flag documents for human review, so do not default everything to "High".
 
 STRICT OUTPUT RULES:
 1. Return ONLY a single valid JSON object. No markdown, no code fences, no commentary, no explanations before or after.
@@ -351,6 +358,57 @@ def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: l
 
 
 # ---------------------------------------------------------------------------
+# Post-extraction validation
+# ---------------------------------------------------------------------------
+
+VALIDATION_TOLERANCE = 0.01  # absolute currency tolerance for the subtotal+tax+shipping=total check
+
+
+def _parse_numeric(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).strip().replace(",", ""))
+    except ValueError:
+        return None
+
+
+def validate_extraction(data: dict, required_fields: set | None = None) -> list[str]:
+    """
+    Lightweight, deterministic QA on an extraction result - checks missing required fields,
+    Gemini's own self-reported "Low" confidence fields, and a Subtotal + Tax + Shipping = Total
+    reconciliation (which doesn't depend on the model's self-assessment at all).
+
+    Returns a list of plain-English issue strings; empty list means nothing to flag.
+    """
+    issues = []
+
+    for field in (required_fields or set()):
+        value = data.get(field)
+        if value is None or value == "" or value == []:
+            issues.append(f"Missing required field: {field}")
+
+    confidence = data.get("field_confidence")
+    if isinstance(confidence, dict):
+        for field, level in confidence.items():
+            if str(level).strip().lower() == "low":
+                issues.append(f"Low confidence: {field}")
+
+    subtotal = _parse_numeric(data.get("subtotal"))
+    total = _parse_numeric(data.get("total"))
+    if subtotal is not None and total is not None:
+        tax = _parse_numeric(data.get("tax")) or 0.0
+        shipping = _parse_numeric(data.get("shipping_charges")) or 0.0
+        expected_total = subtotal + tax + shipping
+        if abs(expected_total - total) > VALIDATION_TOLERANCE:
+            issues.append(f"Total mismatch: Subtotal + Tax + Shipping = {expected_total:.2f}, but Total = {total:.2f}")
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Public extraction entry point
 # ---------------------------------------------------------------------------
 
@@ -361,6 +419,7 @@ def extract_document(
     doc_type: str,
     custom_fields: list[dict] | None = None,
     excluded_fields: set | None = None,
+    required_fields: set | None = None,
     primary_model_name: str = "",
     fallback_models: list[str] | None = None,
 ) -> dict:
@@ -370,6 +429,9 @@ def extract_document(
     custom_fields: optional list of {"name", "description", "scope", "is_list"} to extract in addition
                    to the built-in schema (scope is "All" or one of DOC_TYPES).
     excluded_fields: optional set of built-in field names to skip extracting entirely.
+    required_fields: optional set of field names that must be present - missing ones, plus any field
+                   Gemini self-reports as "Low" confidence, and a Subtotal+Tax+Shipping vs Total
+                   mismatch, are returned in result["validation_issues"] for human review.
     primary_model_name: the name `model` was constructed with, used only to label results and to
                    avoid re-trying the same model as its own fallback.
     fallback_models: models to try, in order, if the primary model's free-tier DAILY quota is
@@ -377,7 +439,7 @@ def extract_document(
                    primary_model_name. Per-minute rate limits are already retried within a single
                    model by call_gemini_with_json_retry and never trigger a model switch.
 
-    Returns a dict: {filename, doc_type, success, data, error, model_used}
+    Returns a dict: {filename, doc_type, success, data, error, model_used, validation_issues}
     """
     result = {"filename": filename, "doc_type": doc_type, "success": False, "data": None, "error": None}
 
@@ -430,6 +492,7 @@ def extract_document(
         result["success"] = True
         result["data"] = data
         result["model_used"] = name
+        result["validation_issues"] = validate_extraction(data, required_fields)
         return result
 
     if len(tried_names) > 1:

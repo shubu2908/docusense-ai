@@ -9,12 +9,17 @@ stdout. Exit code is 0 if the script itself ran (check the JSON's
 arguments or an unexpected crash before any JSON could be produced.
 
 Usage:
-  python uipath_cli.py to-excel --api-key KEY --files "a.pdf|b.tif" --output out.xlsx [--model NAME] [--doc-type Invoice] [--result-file result.json]
-  python uipath_cli.py to-rows  --api-key KEY --files "a.pdf|b.tif" [--model NAME] [--doc-type Invoice] [--result-file result.json]
-  python uipath_cli.py single   --api-key KEY --file  a.pdf         [--model NAME] [--doc-type Invoice] [--result-file result.json]
+  python uipath_cli.py to-excel --api-key KEY --files "a.pdf|b.tif" --output out.xlsx [--model NAME] [--doc-type Invoice] [--required-fields "po_number,total"] [--result-file result.json]
+  python uipath_cli.py to-rows  --api-key KEY --files "a.pdf|b.tif" [--model NAME] [--doc-type Invoice] [--required-fields "po_number,total"] [--result-file result.json]
+  python uipath_cli.py single   --api-key KEY --file  a.pdf         [--model NAME] [--doc-type Invoice] [--required-fields "po_number,total"] [--result-file result.json]
 
 --files takes a "|"-delimited list of absolute file paths (build it in UiPath with
 String.Join("|", arrayOfPaths)) since that's simpler to construct from a workflow than JSON.
+
+--required-fields takes a comma-separated list of field names that must be present - missing
+ones (plus any field Gemini itself reports "Low" confidence in, and a Subtotal+Tax+Shipping
+vs Total mismatch) come back as "Validation Status"/"Validation Notes" (to-excel/to-rows) or
+"validation_issues" (single).
 
 --result-file, if given, also writes the JSON result to that path. Prefer this over
 capturing stdout from "Start Process"/"Invoke Power Shell" in UiPath — the exact
@@ -45,6 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_excel.add_argument("--output", required=True, help="Absolute path to write the .xlsx report to")
     p_excel.add_argument("--model", default="")
     p_excel.add_argument("--doc-type", default="Invoice")
+    p_excel.add_argument("--required-fields", default="")
     p_excel.add_argument("--result-file", default="")
 
     p_rows = sub.add_parser("to-rows")
@@ -52,6 +58,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rows.add_argument("--files", required=True, help='"|"-separated list of absolute file paths')
     p_rows.add_argument("--model", default="")
     p_rows.add_argument("--doc-type", default="Invoice")
+    p_rows.add_argument("--required-fields", default="")
     p_rows.add_argument("--result-file", default="")
 
     p_single = sub.add_parser("single")
@@ -59,6 +66,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_single.add_argument("--file", required=True)
     p_single.add_argument("--model", default="")
     p_single.add_argument("--doc-type", default="Invoice")
+    p_single.add_argument("--required-fields", default="")
     p_single.add_argument("--result-file", default="")
 
     return parser
@@ -82,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_excel_path=args.output,
                 model_name=args.model,
                 doc_type=args.doc_type,
+                required_fields_csv=args.required_fields,
             )
         elif args.command == "to-rows":
             files = [f for f in args.files.split("|") if f]
@@ -90,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
                 file_paths_json=json.dumps(files),
                 model_name=args.model,
                 doc_type=args.doc_type,
+                required_fields_csv=args.required_fields,
             )
         else:  # single
             result = extract_single_document(
@@ -97,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
                 file_path=args.file,
                 model_name=args.model,
                 doc_type=args.doc_type,
+                required_fields_csv=args.required_fields,
             )
     except Exception as e:
         result = json.dumps({"success": False, "error": f"Unexpected error: {e}"})

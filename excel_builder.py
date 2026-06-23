@@ -168,13 +168,19 @@ def header_detail_row(d: dict, custom_field_names: list[str] | None = None) -> d
         row[label] = data.get(key) if data else None
     for name in custom_field_names:
         row[name] = data.get(name) if data else None
+    issues = d.get("validation_issues") or []
+    row["Validation Status"] = "Needs Review" if issues else ("OK" if data else "")
+    row["Validation Notes"] = "; ".join(issues)
     return row
 
 
 def _build_header_details_sheet(wb: Workbook, documents: list[dict], custom_field_names: list[str] | None = None) -> None:
     custom_field_names = custom_field_names or []
     ws = wb.create_sheet("Header Details")
-    headers = ["File Name"] + [label for label, _ in HEADER_DETAIL_COLUMNS] + custom_field_names
+    headers = (
+        ["File Name"] + [label for label, _ in HEADER_DETAIL_COLUMNS] + custom_field_names
+        + ["Validation Status", "Validation Notes"]
+    )
     rows = [[header_detail_row(d, custom_field_names)[h] for h in headers] for d in documents]
 
     _write_table(ws, 1, headers, rows)
