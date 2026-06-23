@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import time
 from typing import Any, Optional
 
 import google.generativeai as genai
@@ -238,10 +239,41 @@ def _extract_response_text(response) -> str:
         raise RuntimeError(f"Could not read text from Gemini response: {e}") from e
 
 
+MAX_RATE_LIMIT_RETRIES = 2
+DEFAULT_RATE_LIMIT_DELAY = 20.0
+_RETRY_DELAY_RE = re.compile(r"retry_delay\s*\{?\s*seconds:\s*(\d+)", re.IGNORECASE)
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "429" in text or "ResourceExhausted" in type(exc).__name__ or "quota" in text.lower()
+
+
+def _extract_retry_delay(exc: Exception) -> float:
+    match = _RETRY_DELAY_RE.search(str(exc))
+    return float(match.group(1)) + 1 if match else DEFAULT_RATE_LIMIT_DELAY
+
+
+def _send_with_rate_limit_retry(chat, message, generation_config) -> tuple[Optional[Any], Optional[Exception]]:
+    """Sends a chat message, automatically waiting and retrying if Gemini returns a 429 rate-limit error."""
+    last_error: Optional[Exception] = None
+    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+        try:
+            return chat.send_message(message, generation_config=generation_config), None
+        except Exception as e:
+            last_error = e
+            if _is_rate_limit_error(e) and attempt < MAX_RATE_LIMIT_RETRIES:
+                time.sleep(_extract_retry_delay(e))
+                continue
+            return None, e
+    return None, last_error
+
+
 def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: list | str) -> tuple[Optional[Any], Optional[str]]:
     """
     Send `first_message` to Gemini expecting JSON back. If parsing fails, send one
-    follow-up message (in the same chat session) asking for cleaner JSON.
+    follow-up message (in the same chat session) asking for cleaner JSON. Rate-limit
+    (429) errors are retried automatically, waiting whatever delay Gemini suggests.
 
     Returns (data, error). data is None if both attempts failed.
     """
@@ -251,8 +283,10 @@ def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: l
     )
 
     chat = model.start_chat()
+    response, error = _send_with_rate_limit_retry(chat, first_message, generation_config)
+    if error is not None:
+        return None, f"Gemini request failed: {error}"
     try:
-        response = chat.send_message(first_message, generation_config=generation_config)
         text = _extract_response_text(response)
     except Exception as e:
         return None, f"Gemini request failed: {e}"
@@ -261,8 +295,10 @@ def call_gemini_with_json_retry(model: "genai.GenerativeModel", first_message: l
     if data is not None:
         return data, None
 
+    response2, error2 = _send_with_rate_limit_retry(chat, JSON_RETRY_INSTRUCTION, generation_config)
+    if error2 is not None:
+        return None, f"Gemini retry request failed: {error2}"
     try:
-        response2 = chat.send_message(JSON_RETRY_INSTRUCTION, generation_config=generation_config)
         text2 = _extract_response_text(response2)
     except Exception as e:
         return None, f"Gemini retry request failed: {e}"

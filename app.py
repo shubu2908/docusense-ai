@@ -240,9 +240,8 @@ if analyse_clicked:
 
     try:
         model = configure_api(api_key, model_name)
-        model.generate_content("Reply with the single word: OK")
     except Exception as e:
-        st.error(f"Could not connect to Gemini with this API key: {e}")
+        st.error(f"Could not configure Gemini with this API key: {e}")
         st.stop()
 
     results = []
